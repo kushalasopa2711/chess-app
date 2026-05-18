@@ -1,0 +1,15 @@
+# Secrets — never commit (use .env.example only)
+.env
+
+# Local database
+*.db
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Runtime uploads (created by the app)
+videos/
+screenshots/

@@ -1,0 +1,1145 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>⚙️ ChessWager Admin</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com"/>
+  <link href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;700;800;900&display=swap" rel="stylesheet"/>
+  <style>
+  /* ── Reset & base ── */
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: 'Nunito', sans-serif; background: #0F1117; color: #E2E8F0; min-height: 100vh; }
+
+  /* ── Login screen ── */
+  #login-screen {
+    min-height: 100vh; display: flex; align-items: center; justify-content: center;
+    background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%);
+  }
+  .login-card {
+    background: #1E2235; border: 1px solid #2D3555;
+    border-radius: 20px; padding: 48px 44px; width: 380px;
+    box-shadow: 0 24px 60px rgba(0,0,0,.5); text-align: center;
+  }
+  .login-icon { font-size: 52px; margin-bottom: 16px; }
+  .login-title { font-size: 24px; font-weight: 900; color: #fff; margin-bottom: 6px; }
+  .login-sub   { font-size: 14px; color: #7B8CB8; margin-bottom: 28px; }
+  .login-input {
+    width: 100%; padding: 13px 16px; background: #0F1117;
+    border: 2px solid #2D3555; border-radius: 10px;
+    font-family: 'Nunito', sans-serif; font-size: 16px; color: #E2E8F0;
+    outline: none; margin-bottom: 16px; letter-spacing: .08em;
+  }
+  .login-input:focus { border-color: #6C63FF; }
+  .login-btn {
+    width: 100%; padding: 13px; border: none; border-radius: 99px; cursor: pointer;
+    background: linear-gradient(135deg, #6C63FF, #9C5CF6);
+    font-family: 'Nunito', sans-serif; font-size: 16px; font-weight: 800; color: #fff;
+    box-shadow: 0 4px 16px rgba(108,99,255,.4);
+  }
+  .login-btn:hover { filter: brightness(1.1); }
+
+  /* ── App shell ── */
+  #app { display: none; min-height: 100vh; }
+
+  /* ── Sidebar ── */
+  .sidebar {
+    position: fixed; top: 0; left: 0; bottom: 0; width: 230px;
+    background: #1E2235; border-right: 1px solid #2D3555;
+    display: flex; flex-direction: column; z-index: 50;
+  }
+  .sb-brand {
+    padding: 24px 20px; display: flex; align-items: center; gap: 10px;
+    border-bottom: 1px solid #2D3555;
+  }
+  .sb-chess { font-size: 28px; }
+  .sb-name  { font-size: 18px; font-weight: 900; color: #fff; }
+  .sb-badge { font-size: 10px; background: #FF5252; color: #fff; padding: 2px 7px; border-radius: 99px; font-weight: 800; }
+  .sb-nav   { flex: 1; padding: 12px 10px; display: flex; flex-direction: column; gap: 2px; }
+  .sb-link  {
+    display: flex; align-items: center; gap: 10px; padding: 11px 14px;
+    border-radius: 10px; cursor: pointer; font-size: 15px; font-weight: 700;
+    color: #7B8CB8; transition: background .15s, color .15s; border: none;
+    background: transparent; width: 100%; text-align: left;
+  }
+  .sb-link:hover { background: #252A40; color: #E2E8F0; }
+  .sb-link.active { background: rgba(108,99,255,.18); color: #6C63FF; }
+  .sb-link .icon { font-size: 18px; width: 22px; text-align: center; }
+  .sb-bottom { padding: 14px 10px; border-top: 1px solid #2D3555; }
+  .sb-key {
+    font-size: 11px; color: #4A5280; word-break: break-all;
+    padding: 0 4px; font-family: monospace;
+  }
+
+  /* ── Main content ── */
+  .main { margin-left: 230px; min-height: 100vh; }
+
+  /* ── Topbar ── */
+  .topbar {
+    height: 64px; background: #1E2235; border-bottom: 1px solid #2D3555;
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 0 28px; position: sticky; top: 0; z-index: 40;
+  }
+  .topbar-title { font-size: 20px; font-weight: 900; color: #fff; }
+  .topbar-right { display: flex; align-items: center; gap: 12px; }
+  .btn-refresh {
+    background: #252A40; border: 1px solid #2D3555; color: #E2E8F0;
+    padding: 8px 16px; border-radius: 8px; cursor: pointer;
+    font-family: 'Nunito', sans-serif; font-size: 13px; font-weight: 700;
+  }
+  .btn-refresh:hover { background: #2D3555; }
+  .admin-label { font-size: 13px; color: #7B8CB8; }
+
+  /* ── Sections ── */
+  .section { display: none; padding: 28px; }
+  .section.active { display: block; }
+
+  /* ── Stat cards ── */
+  .stat-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 16px; margin-bottom: 28px; }
+  .stat-card {
+    background: #1E2235; border: 1px solid #2D3555; border-radius: 14px; padding: 22px 20px;
+    position: relative; overflow: hidden;
+  }
+  .stat-card::before {
+    content: ''; position: absolute; top: 0; left: 0; right: 0; height: 3px;
+    background: var(--accent, #6C63FF); border-radius: 14px 14px 0 0;
+  }
+  .stat-card.green { --accent: #43C59E; }
+  .stat-card.orange { --accent: #FF7043; }
+  .stat-card.red { --accent: #FF5252; }
+  .stat-card.yellow { --accent: #FFD600; }
+  .stat-icon { font-size: 28px; margin-bottom: 12px; }
+  .stat-val { font-size: 30px; font-weight: 900; color: #fff; }
+  .stat-label { font-size: 13px; color: #7B8CB8; font-weight: 700; margin-top: 4px; }
+
+  /* ── Section header ── */
+  .sec-header {
+    display: flex; align-items: center; justify-content: space-between;
+    margin-bottom: 18px; flex-wrap: wrap; gap: 12px;
+  }
+  .sec-title { font-size: 20px; font-weight: 900; color: #fff; }
+  .sec-sub { font-size: 14px; color: #7B8CB8; margin-top: 2px; }
+
+  /* ── Search bar ── */
+  .search-input {
+    background: #0F1117; border: 1px solid #2D3555; border-radius: 8px;
+    padding: 9px 14px; font-family: 'Nunito', sans-serif; font-size: 14px; color: #E2E8F0;
+    outline: none; min-width: 220px;
+  }
+  .search-input:focus { border-color: #6C63FF; }
+
+  /* ── Table ── */
+  .table-wrap { background: #1E2235; border: 1px solid #2D3555; border-radius: 14px; overflow: hidden; }
+  table { width: 100%; border-collapse: collapse; font-size: 14px; }
+  thead { background: #252A40; }
+  th { padding: 13px 16px; text-align: left; font-size: 12px; font-weight: 800;
+       text-transform: uppercase; letter-spacing: .6px; color: #7B8CB8; }
+  td { padding: 13px 16px; border-top: 1px solid #252A40; vertical-align: middle; }
+  tr:hover td { background: #252A40; }
+
+  /* ── Badges ── */
+  .badge {
+    display: inline-block; padding: 3px 10px; border-radius: 99px;
+    font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: .4px;
+  }
+  .badge-green  { background: rgba(67,197,158,.15); color: #43C59E; }
+  .badge-red    { background: rgba(255,82,82,.15);  color: #FF5252; }
+  .badge-yellow { background: rgba(255,214,0,.15);  color: #FFD600; }
+  .badge-gray   { background: rgba(123,140,184,.15); color: #7B8CB8; }
+  .badge-purple { background: rgba(108,99,255,.15); color: #6C63FF; }
+
+  /* ── Action buttons in table ── */
+  .act-btn {
+    padding: 5px 12px; border-radius: 6px; cursor: pointer;
+    font-family: 'Nunito', sans-serif; font-size: 12px; font-weight: 800; border: none;
+    transition: filter .15s;
+  }
+  .act-btn:hover { filter: brightness(1.15); }
+  .act-add    { background: rgba(67,197,158,.2);  color: #43C59E; }
+  .act-deduct { background: rgba(255,82,82,.2);   color: #FF5252; }
+  .act-ban    { background: rgba(255,82,82,.18);  color: #FF5252; }
+  .act-unban  { background: rgba(67,197,158,.18); color: #43C59E; }
+  .act-view   { background: rgba(108,99,255,.18); color: #6C63FF; }
+
+  /* ── Mini form popup ── */
+  .popup-overlay {
+    position: fixed; inset: 0; background: rgba(0,0,0,.65); backdrop-filter: blur(4px);
+    z-index: 200; display: flex; align-items: center; justify-content: center;
+    opacity: 0; pointer-events: none; transition: opacity .2s;
+  }
+  .popup-overlay.open { opacity: 1; pointer-events: all; }
+  .popup-box {
+    background: #1E2235; border: 1px solid #2D3555; border-radius: 20px;
+    padding: 36px 32px; width: 380px; max-width: 90%;
+    box-shadow: 0 24px 60px rgba(0,0,0,.5);
+    transform: scale(.9); transition: transform .2s;
+  }
+  .popup-overlay.open .popup-box { transform: scale(1); }
+  .popup-title { font-size: 20px; font-weight: 900; color: #fff; margin-bottom: 6px; }
+  .popup-sub   { font-size: 14px; color: #7B8CB8; margin-bottom: 20px; }
+  .popup-input {
+    width: 100%; padding: 12px 14px; background: #0F1117;
+    border: 1px solid #2D3555; border-radius: 10px;
+    font-family: 'Nunito', sans-serif; font-size: 15px; color: #E2E8F0;
+    outline: none; margin-bottom: 10px;
+  }
+  .popup-input:focus { border-color: #6C63FF; }
+  .popup-feet { display: flex; gap: 10px; margin-top: 16px; }
+  .popup-ok  { flex: 1; padding: 12px; border: none; border-radius: 10px; cursor: pointer;
+               background: linear-gradient(135deg, #6C63FF, #9C5CF6);
+               font-family: 'Nunito', sans-serif; font-size: 15px; font-weight: 800; color: #fff; }
+  .popup-cancel { padding: 12px 20px; border: 1px solid #2D3555; border-radius: 10px; cursor: pointer;
+               background: transparent; font-family: 'Nunito', sans-serif; font-size: 15px; font-weight: 700; color: #7B8CB8; }
+
+  /* ── Pagination ── */
+  .pagination { display: flex; align-items: center; justify-content: center; gap: 10px; margin-top: 16px; }
+  .pg-btn {
+    padding: 7px 16px; background: #1E2235; border: 1px solid #2D3555;
+    border-radius: 8px; cursor: pointer; font-family: 'Nunito', sans-serif;
+    font-size: 13px; font-weight: 700; color: #E2E8F0;
+  }
+  .pg-btn:disabled { opacity: .4; cursor: default; }
+  .pg-info { font-size: 13px; color: #7B8CB8; }
+
+  /* ── Toast ── */
+  #admin-toasts {
+    position: fixed; bottom: 24px; right: 24px; z-index: 999;
+    display: flex; flex-direction: column; gap: 10px;
+  }
+  .a-toast {
+    background: #252A40; border: 1px solid #2D3555; color: #E2E8F0;
+    padding: 12px 20px; border-radius: 10px; font-size: 14px; font-weight: 700;
+    box-shadow: 0 8px 24px rgba(0,0,0,.4); animation: slide-in .2s ease;
+  }
+  .a-toast.ok  { border-color: #43C59E; color: #43C59E; }
+  .a-toast.err { border-color: #FF5252; color: #FF5252; }
+  @keyframes slide-in { from { transform: translateX(50px); opacity: 0; } }
+
+  /* ── Summary bar ── */
+  .sum-bar {
+    display: flex; gap: 16px; flex-wrap: wrap; margin-bottom: 24px;
+  }
+  .sum-pill {
+    background: #1E2235; border: 1px solid #2D3555; border-radius: 10px;
+    padding: 10px 18px; display: flex; flex-direction: column; gap: 2px;
+  }
+  .sum-pill-val { font-size: 20px; font-weight: 900; color: #fff; }
+  .sum-pill-label { font-size: 11px; color: #7B8CB8; font-weight: 700; text-transform: uppercase; }
+
+  /* ── Severity bars ── */
+  .sev1 { color: #FFD600; }
+  .sev2 { color: #FF9800; }
+  .sev3 { color: #FF5252; font-weight: 900; }
+
+  /* ── Empty state ── */
+  .empty { text-align: center; padding: 48px; color: #4A5280; font-size: 16px; }
+
+  /* ── Scrollbar ── */
+  ::-webkit-scrollbar { width: 5px; } ::-webkit-scrollbar-thumb { background: #2D3555; border-radius: 99px; }
+  </style>
+</head>
+<body>
+
+<!-- ══════════════════ LOGIN ════════════════════════════ -->
+<div id="login-screen">
+  <div class="login-card">
+    <div class="login-icon">⚙️</div>
+    <div class="login-title">Admin Dashboard</div>
+    <div class="login-sub">ChessWager · Secure Admin Access</div>
+    <input class="login-input" type="password" id="key-input" placeholder="Enter admin secret key" />
+    <button class="login-btn" onclick="doLogin()">Unlock Dashboard 🔓</button>
+  </div>
+</div>
+
+<!-- ══════════════════ APP ══════════════════════════════ -->
+<div id="app">
+
+  <!-- Sidebar -->
+  <aside class="sidebar">
+    <div class="sb-brand">
+      <span class="sb-chess">♟</span>
+      <span class="sb-name">Admin</span>
+      <span class="sb-badge">ADMIN</span>
+    </div>
+    <nav class="sb-nav">
+      <button class="sb-link active" data-sec="overview" onclick="goto('overview',this)">
+        <span class="icon">📊</span> Overview
+      </button>
+      <button class="sb-link" data-sec="users" onclick="goto('users',this)">
+        <span class="icon">👥</span> Users
+      </button>
+      <button class="sb-link" data-sec="games" onclick="goto('games',this)">
+        <span class="icon">♟</span> Games
+      </button>
+      <button class="sb-link" data-sec="flags" onclick="goto('flags',this)">
+        <span class="icon">⚠️</span> Anti-Cheat Flags
+      </button>
+      <button class="sb-link" data-sec="videos" onclick="goto('videos',this)">
+        <span class="icon">📹</span> Video Evidence
+      </button>
+      <button class="sb-link" data-sec="deposits" onclick="goto('deposits',this)">
+        <span class="icon">💵</span> UPI Deposits
+      </button>
+      <button class="sb-link" data-sec="payouts" onclick="goto('payouts',this)">
+        <span class="icon">💸</span> Payouts (24h Hold)
+      </button>
+      <button class="sb-link" data-sec="revenue" onclick="goto('revenue',this)">
+        <span class="icon">📈</span> Revenue
+      </button>
+      <button class="sb-link" data-sec="penalties" onclick="goto('penalties',this)">
+        <span class="icon">🚫</span> Penalties
+      </button>
+    </nav>
+    <div class="sb-bottom">
+      <div style="font-size:11px;color:#4A5280;margin-bottom:4px">API Docs</div>
+      <a href="/docs" target="_blank" style="font-size:13px;font-weight:700;color:#6C63FF;">Open Swagger UI ↗</a>
+    </div>
+  </aside>
+
+  <!-- Main -->
+  <div class="main">
+
+    <!-- Topbar -->
+    <div class="topbar">
+      <div class="topbar-title" id="topbar-title">📊 Overview</div>
+      <div class="topbar-right">
+        <span class="admin-label">🔒 Secure Session</span>
+        <button class="btn-refresh" onclick="reload()">🔄 Refresh</button>
+      </div>
+    </div>
+
+    <!-- ── OVERVIEW ── -->
+    <section id="sec-overview" class="section active">
+      <div class="stat-grid" id="stats-grid">
+        <div class="stat-card"><div class="stat-icon">⏳</div><div class="stat-val">…</div><div class="stat-label">Loading</div></div>
+      </div>
+
+      <div class="sum-bar" id="money-bar">
+        <!-- filled by JS -->
+      </div>
+
+      <div class="sec-header" style="margin-top:8px">
+        <div>
+          <div class="sec-title">Recent Anti-Cheat Alerts</div>
+          <div class="sec-sub">Severity 3 (auto-ban triggers)</div>
+        </div>
+        <button class="act-btn act-view" onclick="goto('flags',document.querySelector('[data-sec=flags]'))">View All →</button>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>User</th><th>Game</th><th>Type</th><th>Description</th><th>Time</th></tr></thead>
+          <tbody id="recent-flags-body"><tr><td colspan="5" class="empty">Loading…</td></tr></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- ── USERS ── -->
+    <section id="sec-users" class="section">
+      <div class="sec-header">
+        <div>
+          <div class="sec-title">All Players</div>
+          <div class="sec-sub" id="users-count">Loading…</div>
+        </div>
+        <input class="search-input" type="text" id="user-search" placeholder="🔍 Search username or email…" oninput="searchUsers()" />
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>ID</th><th>Username</th><th>Email</th><th>Balance</th>
+              <th>Locked</th><th>Games</th><th>Wins</th><th>Flags</th><th>Status</th><th>Actions</th>
+            </tr>
+          </thead>
+          <tbody id="users-body"><tr><td colspan="10" class="empty">Loading…</td></tr></tbody>
+        </table>
+      </div>
+      <div class="pagination" id="users-pg"></div>
+    </section>
+
+    <!-- ── GAMES ── -->
+    <section id="sec-games" class="section">
+      <div class="sec-header">
+        <div>
+          <div class="sec-title">All Games</div>
+          <div class="sec-sub" id="games-count">Loading…</div>
+        </div>
+        <div style="display:flex;gap:8px">
+          <button class="act-btn act-view" onclick="loadGames('waiting')">⏳ Waiting</button>
+          <button class="act-btn act-add" onclick="loadGames('active')">⚔️ Active</button>
+          <button class="act-btn act-view" onclick="loadGames('')">📋 All</button>
+        </div>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr><th>ID</th><th>White</th><th>Black</th><th>Status</th><th>Bet</th><th>Prize</th><th>Result</th><th>Created</th></tr>
+          </thead>
+          <tbody id="games-body"><tr><td colspan="8" class="empty">Loading…</td></tr></tbody>
+        </table>
+      </div>
+      <div class="pagination" id="games-pg"></div>
+    </section>
+
+    <!-- ── FLAGS ── -->
+    <section id="sec-flags" class="section">
+      <div class="sec-header">
+        <div>
+          <div class="sec-title">⚠️ Anti-Cheat Flags</div>
+          <div class="sec-sub" id="flags-count">Loading…</div>
+        </div>
+        <div style="display:flex;gap:8px">
+          <button class="act-btn act-ban" onclick="loadFlags(3)">🔴 Severity 3</button>
+          <button class="act-btn act-deduct" onclick="loadFlags(2)">🟡 Severity 2</button>
+          <button class="act-btn act-view" onclick="loadFlags('')">📋 All</button>
+        </div>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr><th>ID</th><th>User</th><th>Game</th><th>Type</th><th>Severity</th><th>Description</th><th>Time</th></tr>
+          </thead>
+          <tbody id="flags-body"><tr><td colspan="7" class="empty">Loading…</td></tr></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- ── VIDEOS ── -->
+    <section id="sec-videos" class="section">
+      <div class="sec-header">
+        <div>
+          <div class="sec-title">📹 Video Evidence</div>
+          <div class="sec-sub" id="videos-count">Loading…</div>
+        </div>
+        <div style="display:flex;gap:8px">
+          <button class="act-btn act-ban" onclick="loadVideos(true)">🚩 Flagged Only</button>
+          <button class="act-btn act-view" onclick="loadVideos(false)">📋 All Chunks</button>
+        </div>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr><th>ID</th><th>User</th><th>Game</th><th>Chunk</th><th>Size</th><th>Bet</th><th>Flagged</th><th>Recorded At</th><th>Actions</th></tr>
+          </thead>
+          <tbody id="videos-body"><tr><td colspan="9" class="empty">Loading…</td></tr></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- ── UPI DEPOSITS ── -->
+    <section id="sec-deposits" class="section">
+      <div class="sec-header">
+        <div>
+          <div class="sec-title">💵 UPI Deposit Requests</div>
+          <div class="sec-sub" id="dep-count">Loading…</div>
+        </div>
+        <div style="display:flex;gap:8px">
+          <button class="act-btn act-ban"  onclick="loadDeposits('pending')">⏳ Pending</button>
+          <button class="act-btn act-add"  onclick="loadDeposits('approved')">✅ Approved</button>
+          <button class="act-btn act-view" onclick="loadDeposits('')">📋 All</button>
+        </div>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr><th>ID</th><th>User</th><th>Amount</th><th>UTR Number</th><th>Status</th><th>Submitted</th><th>Actions</th></tr>
+          </thead>
+          <tbody id="deposits-body"><tr><td colspan="7" class="empty">Loading…</td></tr></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- ── PAYOUTS ── -->
+    <section id="sec-payouts" class="section">
+      <div class="sec-header">
+        <div>
+          <div class="sec-title">💸 Pending Payouts (24h Video Review)</div>
+          <div class="sec-sub">Review webcam video before releasing winnings</div>
+        </div>
+        <div style="display:flex;gap:8px">
+          <button class="act-btn act-ban"  onclick="loadPayouts('pending')">⏳ Pending</button>
+          <button class="act-btn act-add"  onclick="loadPayouts('approved')">✅ Released</button>
+          <button class="act-btn act-view" onclick="loadPayouts('')">📋 All</button>
+        </div>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr><th>ID</th><th>Winner</th><th>Game</th><th>Gross</th><th>Fee (10%)</th><th>Net Payout</th><th>Auto-Release</th><th>Status</th><th>Actions</th></tr>
+          </thead>
+          <tbody id="payouts-body"><tr><td colspan="9" class="empty">Loading…</td></tr></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- ── REVENUE ── -->
+    <section id="sec-revenue" class="section">
+      <div class="sec-header">
+        <div><div class="sec-title">📈 Platform Revenue</div></div>
+        <button class="btn-refresh" onclick="loadRevenue()">🔄 Refresh</button>
+      </div>
+      <div class="stat-grid" id="rev-grid">
+        <div class="stat-card"><div class="stat-icon">⏳</div><div class="stat-val">…</div></div>
+      </div>
+      <div style="margin-top:20px;background:#1E2235;border:1px solid #2D3555;border-radius:14px;padding:24px">
+        <div style="font-size:16px;font-weight:800;color:#fff;margin-bottom:12px">💡 How you always profit</div>
+        <div style="color:#A0A8CC;font-size:14px;line-height:1.8">
+          • Every game: winner gets <strong style="color:#43C59E">90%</strong> of prize pool, platform keeps <strong style="color:#FFD600">10%</strong><br/>
+          • Example: two players bet ₹50 each → pool = ₹100 → platform earns ₹10, winner gets ₹90<br/>
+          • Rejected payouts (cheating): platform keeps <strong>100%</strong> of that prize pool<br/>
+          • Penalties: extra deductions credited to platform revenue<br/>
+          • Result: <strong style="color:#43C59E">You profit on every single game regardless of who wins</strong>
+        </div>
+      </div>
+    </section>
+
+    <!-- ── PENALTIES ── -->
+    <section id="sec-penalties" class="section">
+      <div class="sec-header">
+        <div>
+          <div class="sec-title">🚫 Applied Penalties</div>
+          <div class="sec-sub">All penalties applied via video review</div>
+        </div>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr><th>ID</th><th>User</th><th>Game</th><th>Deducted</th><th>Banned</th><th>Reason</th><th>Date</th></tr>
+          </thead>
+          <tbody id="penalties-body"><tr><td colspan="7" class="empty">Loading…</td></tr></tbody>
+        </table>
+      </div>
+    </section>
+
+  </div><!-- .main -->
+</div><!-- #app -->
+
+<!-- ── Mini popup ── -->
+<div class="popup-overlay" id="popup-overlay">
+  <div class="popup-box">
+    <div class="popup-title" id="popup-title">Action</div>
+    <div class="popup-sub"  id="popup-sub">Details</div>
+    <input class="popup-input" type="number" id="popup-amount" placeholder="Amount in ₹" min="0.01" step="1" style="display:none"/>
+    <input class="popup-input" type="text"   id="popup-note"   placeholder="Note / reason"/>
+    <div class="popup-feet">
+      <button class="popup-cancel" onclick="closePopup()">Cancel</button>
+      <button class="popup-ok" id="popup-ok">Confirm</button>
+    </div>
+  </div>
+</div>
+
+<!-- Toasts -->
+<div id="admin-toasts"></div>
+
+<script>
+'use strict';
+
+let ADMIN_KEY = '';
+let _page_users = 1, _page_games = 1;
+const BASE = '';
+
+// ── API ──────────────────────────────────────────────────────────────────
+async function api(method, path, body) {
+  const headers = {};
+  if (body && !(body instanceof FormData)) headers['Content-Type'] = 'application/json';
+  const res = await fetch(BASE + path, {
+    method,
+    headers,
+    body: body instanceof FormData ? body : (body ? JSON.stringify(body) : undefined),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`);
+  return data;
+}
+const get  = (p) => api('GET',  p);
+const post = (p, b) => api('POST', p, b);
+
+// ── Toast ─────────────────────────────────────────────────────────────────
+function toast(msg, type = 'ok') {
+  const el = document.createElement('div');
+  el.className = `a-toast ${type}`;
+  el.textContent = msg;
+  document.getElementById('admin-toasts').appendChild(el);
+  setTimeout(() => el.remove(), 3500);
+}
+
+// ── Login ─────────────────────────────────────────────────────────────────
+async function doLogin() {
+  const key = document.getElementById('key-input').value.trim();
+  if (!key) return;
+  try {
+    await get(`/admin/stats?admin_key=${encodeURIComponent(key)}`);
+    ADMIN_KEY = key;
+    document.getElementById('login-screen').style.display = 'none';
+    document.getElementById('app').style.display = 'block';
+    loadOverview();
+  } catch(e) {
+    document.getElementById('key-input').style.borderColor = '#FF5252';
+    toast('❌ Wrong admin key!', 'err');
+  }
+}
+document.getElementById('key-input').addEventListener('keydown', e => {
+  if (e.key === 'Enter') doLogin();
+});
+
+// ── Navigation ────────────────────────────────────────────────────────────
+const TITLES = {
+  overview:  '📊 Overview',
+  users:     '👥 Users',
+  games:     '♟ Games',
+  flags:     '⚠️ Anti-Cheat Flags',
+  videos:    '📹 Video Evidence',
+  deposits:  '💵 UPI Deposits',
+  payouts:   '💸 Payouts (24h Hold)',
+  revenue:   '📈 Platform Revenue',
+  penalties: '🚫 Penalties',
+};
+function goto(sec, btn) {
+  document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
+  document.querySelectorAll('.sb-link').forEach(l => l.classList.remove('active'));
+  document.getElementById(`sec-${sec}`).classList.add('active');
+  if (btn) btn.classList.add('active');
+  document.getElementById('topbar-title').textContent = TITLES[sec] || sec;
+
+  if (sec === 'overview')  loadOverview();
+  if (sec === 'users')     loadUsers();
+  if (sec === 'games')     loadGames('');
+  if (sec === 'flags')     loadFlags('');
+  if (sec === 'videos')    loadVideos(false);
+  if (sec === 'deposits')  loadDeposits('pending');
+  if (sec === 'payouts')   loadPayouts('pending');
+  if (sec === 'revenue')   loadRevenue();
+  if (sec === 'penalties') loadPenalties();
+}
+function reload() {
+  const active = document.querySelector('.section.active');
+  if (active) goto(active.id.replace('sec-', ''));
+}
+
+// ── Overview ──────────────────────────────────────────────────────────────
+async function loadOverview() {
+  try {
+    const d = await get(`/admin/stats?admin_key=${ADMIN_KEY}`);
+
+    document.getElementById('stats-grid').innerHTML = `
+      <div class="stat-card">
+        <div class="stat-icon">👥</div>
+        <div class="stat-val">${d.users.total}</div>
+        <div class="stat-label">Total Players</div>
+      </div>
+      <div class="stat-card green">
+        <div class="stat-icon">✅</div>
+        <div class="stat-val">${d.users.active}</div>
+        <div class="stat-label">Active Players</div>
+      </div>
+      <div class="stat-card red">
+        <div class="stat-icon">🚫</div>
+        <div class="stat-val">${d.users.banned}</div>
+        <div class="stat-label">Banned Accounts</div>
+      </div>
+      <div class="stat-card green">
+        <div class="stat-icon">♟</div>
+        <div class="stat-val">${d.games.total}</div>
+        <div class="stat-label">Total Games</div>
+      </div>
+      <div class="stat-card yellow">
+        <div class="stat-icon">⚔️</div>
+        <div class="stat-val">${d.games.active}</div>
+        <div class="stat-label">Live Games</div>
+      </div>
+      <div class="stat-card orange">
+        <div class="stat-icon">⏳</div>
+        <div class="stat-val">${d.games.waiting}</div>
+        <div class="stat-label">Waiting Games</div>
+      </div>
+      <div class="stat-card yellow">
+        <div class="stat-icon">⚠️</div>
+        <div class="stat-val">${d.anticheat.total_flags}</div>
+        <div class="stat-label">Total AC Flags</div>
+      </div>
+      <div class="stat-card red">
+        <div class="stat-icon">🚨</div>
+        <div class="stat-val">${d.anticheat.severe_flags}</div>
+        <div class="stat-label">Severe Flags</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-icon">📹</div>
+        <div class="stat-val">${d.anticheat.video_chunks}</div>
+        <div class="stat-label">Video Chunks</div>
+      </div>`;
+
+    document.getElementById('money-bar').innerHTML = `
+      <div class="sum-pill">
+        <div class="sum-pill-val">₹${d.money.total_in_wallets.toFixed(2)}</div>
+        <div class="sum-pill-label">💰 In Wallets</div>
+      </div>
+      <div class="sum-pill">
+        <div class="sum-pill-val">₹${d.money.locked_in_games.toFixed(2)}</div>
+        <div class="sum-pill-label">🔒 Locked in Games</div>
+      </div>
+      <div class="sum-pill">
+        <div class="sum-pill-val">₹${d.money.total_deposited.toFixed(2)}</div>
+        <div class="sum-pill-label">💵 Total Ever Deposited</div>
+      </div>
+      <div class="sum-pill">
+        <div class="sum-pill-val">₹${d.money.total_winnings_paid.toFixed(2)}</div>
+        <div class="sum-pill-label">🏆 Total Winnings Paid</div>
+      </div>`;
+
+    // Recent severe flags
+    const flags = await get(`/admin/flags?admin_key=${ADMIN_KEY}&severity=3&per_page=10`);
+    const tbody = document.getElementById('recent-flags-body');
+    if (!flags.flags.length) {
+      tbody.innerHTML = '<tr><td colspan="5" class="empty">No severe flags yet 🎉</td></tr>';
+    } else {
+      tbody.innerHTML = flags.flags.map(f => `
+        <tr>
+          <td><strong style="color:#fff">${f.username}</strong><br><small style="color:#7B8CB8">#${f.user_id}</small></td>
+          <td><span class="badge badge-purple">Game #${f.game_id}</span></td>
+          <td><span class="badge badge-red">${f.flag_type}</span></td>
+          <td style="max-width:300px;font-size:13px;color:#A0A8CC">${f.description}</td>
+          <td style="font-size:12px;color:#7B8CB8">${fmtDate(f.created_at)}</td>
+        </tr>`).join('');
+    }
+  } catch(e) {
+    toast('Failed to load stats: ' + e.message, 'err');
+  }
+}
+
+// ── Users ─────────────────────────────────────────────────────────────────
+let _userSearch = '';
+async function loadUsers(page = _page_users) {
+  _page_users = page;
+  try {
+    const d = await get(`/admin/users?admin_key=${ADMIN_KEY}&page=${page}&per_page=20&search=${encodeURIComponent(_userSearch)}`);
+    document.getElementById('users-count').textContent = `${d.total} players total`;
+
+    const tbody = document.getElementById('users-body');
+    if (!d.users.length) {
+      tbody.innerHTML = '<tr><td colspan="10" class="empty">No users found</td></tr>';
+    } else {
+      tbody.innerHTML = d.users.map(u => `
+        <tr>
+          <td style="color:#7B8CB8;font-size:12px">#${u.id}</td>
+          <td><strong style="color:#fff">${esc(u.username)}</strong></td>
+          <td style="font-size:13px;color:#A0A8CC">${esc(u.email)}</td>
+          <td><strong style="color:#43C59E">₹${u.balance.toFixed(2)}</strong></td>
+          <td style="color:#7B8CB8">₹${u.locked.toFixed(2)}</td>
+          <td style="color:#A0A8CC">${u.games_played}</td>
+          <td style="color:#FFD600">${u.games_won}</td>
+          <td>${u.flag_count > 0
+            ? `<span class="badge ${u.flag_count >= 3 ? 'badge-red' : 'badge-yellow'}">${u.flag_count}</span>`
+            : `<span class="badge badge-gray">0</span>`}
+          </td>
+          <td>${u.is_banned
+            ? `<span class="badge badge-red">Banned</span>`
+            : `<span class="badge badge-green">Active</span>`}
+          </td>
+          <td>
+            <div style="display:flex;gap:5px;flex-wrap:wrap">
+              <button class="act-btn act-add" onclick="addFunds(${u.id},'${esc(u.username)}')">+ Funds</button>
+              <button class="act-btn act-deduct" onclick="deductFunds(${u.id},'${esc(u.username)}')">- Funds</button>
+              ${u.is_banned
+                ? `<button class="act-btn act-unban" onclick="unbanUser(${u.id},'${esc(u.username)}')">Unban</button>`
+                : `<button class="act-btn act-ban" onclick="banUser(${u.id},'${esc(u.username)}')">Ban</button>`}
+            </div>
+          </td>
+        </tr>`).join('');
+    }
+
+    // Pagination
+    const totalPages = Math.ceil(d.total / 20);
+    document.getElementById('users-pg').innerHTML = `
+      <button class="pg-btn" onclick="loadUsers(${page-1})" ${page<=1?'disabled':''}>← Prev</button>
+      <span class="pg-info">Page ${page} of ${totalPages}</span>
+      <button class="pg-btn" onclick="loadUsers(${page+1})" ${page>=totalPages?'disabled':''}>Next →</button>`;
+  } catch(e) {
+    toast('Failed to load users: ' + e.message, 'err');
+  }
+}
+
+let _searchTimer;
+function searchUsers() {
+  clearTimeout(_searchTimer);
+  _userSearch = document.getElementById('user-search').value;
+  _searchTimer = setTimeout(() => loadUsers(1), 350);
+}
+
+// ── Games ─────────────────────────────────────────────────────────────────
+async function loadGames(status = '', page = 1) {
+  _page_games = page;
+  try {
+    const q = `/admin/games?admin_key=${ADMIN_KEY}&page=${page}&per_page=20${status ? '&status=' + status : ''}`;
+    const d = await get(q);
+    document.getElementById('games-count').textContent = `${d.total} games total`;
+
+    const statBadge = {
+      waiting:  'badge-yellow', active: 'badge-green',
+      completed:'badge-gray',   abandoned:'badge-red',
+    };
+    const tbody = document.getElementById('games-body');
+    if (!d.games.length) {
+      tbody.innerHTML = '<tr><td colspan="8" class="empty">No games found</td></tr>';
+    } else {
+      tbody.innerHTML = d.games.map(g => `
+        <tr>
+          <td style="color:#7B8CB8;font-size:12px">#${g.id}</td>
+          <td><strong style="color:#fff">${esc(g.white)}</strong></td>
+          <td style="color:#A0A8CC">${g.black_id ? '#' + g.black_id : '—'}</td>
+          <td><span class="badge ${statBadge[g.status]||'badge-gray'}">${g.status}</span></td>
+          <td style="color:#43C59E">₹${g.bet_amount.toFixed(2)}</td>
+          <td style="color:#FFD600">₹${(g.bet_amount*2).toFixed(2)}</td>
+          <td>${g.result
+            ? `<span class="badge badge-purple">${g.result}</span>`
+            : '<span style="color:#4A5280">—</span>'}
+          </td>
+          <td style="font-size:12px;color:#7B8CB8">${fmtDate(g.created_at)}</td>
+        </tr>`).join('');
+    }
+
+    const totalPages = Math.ceil(d.total / 20) || 1;
+    document.getElementById('games-pg').innerHTML = `
+      <button class="pg-btn" onclick="loadGames('${status}',${page-1})" ${page<=1?'disabled':''}>← Prev</button>
+      <span class="pg-info">Page ${page} of ${totalPages}</span>
+      <button class="pg-btn" onclick="loadGames('${status}',${page+1})" ${page>=totalPages?'disabled':''}>Next →</button>`;
+  } catch(e) {
+    toast('Failed to load games: ' + e.message, 'err');
+  }
+}
+
+// ── Flags ─────────────────────────────────────────────────────────────────
+async function loadFlags(severity = '') {
+  try {
+    const q = `/admin/flags?admin_key=${ADMIN_KEY}&per_page=50${severity !== '' ? '&severity=' + severity : ''}`;
+    const d = await get(q);
+    document.getElementById('flags-count').textContent = `${d.total} flags total`;
+
+    const sevClass = { 1: 'sev1', 2: 'sev2', 3: 'sev3' };
+    const tbody = document.getElementById('flags-body');
+    if (!d.flags.length) {
+      tbody.innerHTML = '<tr><td colspan="7" class="empty">No flags 🎉 All clean!</td></tr>';
+    } else {
+      tbody.innerHTML = d.flags.map(f => `
+        <tr>
+          <td style="color:#7B8CB8;font-size:12px">#${f.id}</td>
+          <td><strong style="color:#fff">${esc(f.username)}</strong><br><small style="color:#7B8CB8">#${f.user_id}</small></td>
+          <td><span class="badge badge-purple">Game #${f.game_id}</span></td>
+          <td><span class="badge badge-yellow">${f.flag_type}</span></td>
+          <td class="${sevClass[f.severity]||''}">⬤ ${f.severity}</td>
+          <td style="max-width:320px;font-size:13px;color:#A0A8CC">${esc(f.description)}</td>
+          <td style="font-size:12px;color:#7B8CB8">${fmtDate(f.created_at)}</td>
+        </tr>`).join('');
+    }
+  } catch(e) {
+    toast('Failed to load flags: ' + e.message, 'err');
+  }
+}
+
+// ── Videos ────────────────────────────────────────────────────────────────
+async function loadVideos(flaggedOnly = false) {
+  try {
+    const q = `/admin/videos?admin_key=${ADMIN_KEY}&per_page=50&flagged_only=${flaggedOnly}`;
+    const d = await get(q);
+    document.getElementById('videos-count').textContent = `${d.total} total chunks`;
+
+    const tbody = document.getElementById('videos-body');
+    if (!d.videos.length) {
+      tbody.innerHTML = '<tr><td colspan="9" class="empty">No video chunks recorded yet</td></tr>';
+    } else {
+      tbody.innerHTML = d.videos.map(v => `
+        <tr>
+          <td style="color:#7B8CB8;font-size:12px">#${v.id}</td>
+          <td><strong style="color:#fff">${esc(v.username)}</strong></td>
+          <td><span class="badge badge-purple">Game #${v.game_id}</span></td>
+          <td style="color:#A0A8CC">${v.chunk_number}</td>
+          <td style="color:#7B8CB8">${v.size_kb} KB</td>
+          <td style="color:#43C59E">₹${v.bet_amount.toFixed(2)}</td>
+          <td>${v.flagged
+            ? `<span class="badge badge-red">🚩 ${esc(v.flag_reason||'Flagged')}</span>`
+            : `<span class="badge badge-green">Clean</span>`}
+          </td>
+          <td style="font-size:12px;color:#7B8CB8">${fmtDate(v.created_at)}</td>
+          <td>
+            <div style="display:flex;gap:5px">
+              <button class="act-btn act-ban" onclick="penaliseFromVideo(${v.user_id},'${esc(v.username)}',${v.game_id})">Apply Penalty</button>
+            </div>
+          </td>
+        </tr>`).join('');
+    }
+  } catch(e) {
+    toast('Failed to load videos: ' + e.message, 'err');
+  }
+}
+
+// ── Penalties ─────────────────────────────────────────────────────────────
+async function loadPenalties() {
+  try {
+    const d = await get(`/admin/penalties?admin_key=${ADMIN_KEY}`);
+    const tbody = document.getElementById('penalties-body');
+    if (!d.length) {
+      tbody.innerHTML = '<tr><td colspan="7" class="empty">No penalties applied yet</td></tr>';
+    } else {
+      tbody.innerHTML = d.map(p => `
+        <tr>
+          <td style="color:#7B8CB8;font-size:12px">#${p.id}</td>
+          <td><strong style="color:#fff">${esc(p.username)}</strong></td>
+          <td>${p.game_id ? `<span class="badge badge-purple">Game #${p.game_id}</span>` : '—'}</td>
+          <td style="color:#FF5252;font-weight:900">₹${p.amount_deducted.toFixed(2)}</td>
+          <td>${p.account_banned
+            ? '<span class="badge badge-red">Yes – Banned</span>'
+            : '<span class="badge badge-gray">No</span>'}
+          </td>
+          <td style="font-size:13px;color:#A0A8CC;max-width:280px">${esc(p.reason)}</td>
+          <td style="font-size:12px;color:#7B8CB8">${fmtDate(p.created_at)}</td>
+        </tr>`).join('');
+    }
+  } catch(e) {
+    toast('Failed: ' + e.message, 'err');
+  }
+}
+
+// ── Action helpers ────────────────────────────────────────────────────────
+let _popupOk = null;
+
+function openPopup(title, sub, showAmount, okLabel, okFn) {
+  document.getElementById('popup-title').textContent = title;
+  document.getElementById('popup-sub').textContent   = sub;
+  document.getElementById('popup-amount').style.display = showAmount ? 'block' : 'none';
+  document.getElementById('popup-amount').value = '';
+  document.getElementById('popup-note').value   = '';
+  document.getElementById('popup-ok').textContent = okLabel;
+  document.getElementById('popup-overlay').classList.add('open');
+  _popupOk = okFn;
+}
+function closePopup() {
+  document.getElementById('popup-overlay').classList.remove('open');
+  _popupOk = null;
+}
+document.getElementById('popup-ok').addEventListener('click', () => {
+  if (_popupOk) _popupOk();
+});
+
+function addFunds(uid, uname) {
+  openPopup(`💵 Add Funds to ${uname}`, 'Credit any amount to this player\'s wallet.', true, 'Add Funds', async () => {
+    const amt  = parseFloat(document.getElementById('popup-amount').value);
+    const note = document.getElementById('popup-note').value || 'Admin credit';
+    if (!amt || amt <= 0) { toast('Enter a valid amount', 'err'); return; }
+    try {
+      const r = await get(`/admin/users/${uid}/add-funds?admin_key=${ADMIN_KEY}&amount=${amt}&note=${encodeURIComponent(note)}`);
+      toast(`✅ Added ₹${amt} to ${uname}. New balance: ₹${r.new_balance}`, 'ok');
+      closePopup(); loadUsers();
+    } catch(e) { toast(e.message, 'err'); }
+  });
+}
+
+function deductFunds(uid, uname) {
+  openPopup(`💸 Deduct Funds from ${uname}`, 'Remove funds from this player\'s wallet.', true, 'Deduct', async () => {
+    const amt  = parseFloat(document.getElementById('popup-amount').value);
+    const note = document.getElementById('popup-note').value || 'Admin deduction';
+    if (!amt || amt <= 0) { toast('Enter a valid amount', 'err'); return; }
+    try {
+      const r = await get(`/admin/users/${uid}/deduct-funds?admin_key=${ADMIN_KEY}&amount=${amt}&note=${encodeURIComponent(note)}`);
+      toast(`✅ Deducted ₹${r.deducted} from ${uname}. New balance: ₹${r.new_balance}`, 'ok');
+      closePopup(); loadUsers();
+    } catch(e) { toast(e.message, 'err'); }
+  });
+}
+
+function banUser(uid, uname) {
+  openPopup(`🚫 Ban ${uname}`, 'This will prevent the player from logging in or playing.', false, 'Ban Account', async () => {
+    const reason = document.getElementById('popup-note').value || 'Admin action';
+    try {
+      await get(`/admin/users/${uid}/ban?admin_key=${ADMIN_KEY}&reason=${encodeURIComponent(reason)}`);
+      toast(`🚫 ${uname} has been banned.`, 'ok');
+      closePopup(); loadUsers();
+    } catch(e) { toast(e.message, 'err'); }
+  });
+}
+
+function unbanUser(uid, uname) {
+  openPopup(`✅ Unban ${uname}`, 'This will restore full access to the account.', false, 'Unban', async () => {
+    try {
+      await get(`/admin/users/${uid}/unban?admin_key=${ADMIN_KEY}`);
+      toast(`✅ ${uname} has been unbanned.`, 'ok');
+      closePopup(); loadUsers();
+    } catch(e) { toast(e.message, 'err'); }
+  });
+}
+
+function penaliseFromVideo(uid, uname, gameId) {
+  openPopup(
+    `🚫 Penalise ${uname}`,
+    `Game #${gameId} · Enter amount to deduct (write "BAN" in the note to also ban account).`,
+    true, 'Apply Penalty',
+    async () => {
+      const amt  = parseFloat(document.getElementById('popup-amount').value) || 0;
+      const note = document.getElementById('popup-note').value || 'Video evidence of cheating';
+      const doBan = note.toUpperCase().includes('BAN');
+      const fd = new FormData();
+      fd.append('penalty_amount', amt);
+      fd.append('ban_account', doBan);
+      fd.append('reason', note);
+      fd.append('admin_key', ADMIN_KEY);
+      try {
+        const r = await api('POST', `/video/${gameId}/penalise/${uid}`, fd);
+        toast(`✅ Penalty applied. Deducted ₹${r.amount_deducted}${r.banned ? ' · BANNED' : ''}`, 'ok');
+        closePopup(); loadVideos(false);
+      } catch(e) { toast(e.message, 'err'); }
+    }
+  );
+}
+
+// ── Deposits ──────────────────────────────────────────────────────────────
+async function loadDeposits(status = 'pending') {
+  try {
+    const d = await get(`/admin/deposits?admin_key=${ADMIN_KEY}${status ? '&status=' + status : ''}`);
+    document.getElementById('dep-count').textContent = `${d.total} total requests`;
+    const tbody = document.getElementById('deposits-body');
+    if (!d.deposits.length) {
+      tbody.innerHTML = '<tr><td colspan="7" class="empty">No deposit requests</td></tr>';
+      return;
+    }
+    tbody.innerHTML = d.deposits.map(dep => `
+      <tr>
+        <td style="color:#7B8CB8;font-size:12px">#${dep.id}</td>
+        <td><strong style="color:#fff">${esc(dep.username)}</strong><br><small style="color:#7B8CB8">#${dep.user_id}</small></td>
+        <td style="color:#43C59E;font-weight:900">₹${dep.amount.toFixed(2)}</td>
+        <td><code style="background:#0F1117;padding:4px 8px;border-radius:6px;font-size:13px;color:#FFD600">${esc(dep.utr_number)}</code></td>
+        <td>${statusBadge(dep.status)}</td>
+        <td style="font-size:12px;color:#7B8CB8">${fmtDate(dep.created_at)}</td>
+        <td>${dep.status === 'pending' ? `
+          <div style="display:flex;gap:5px">
+            <button class="act-btn act-add"  onclick="approveDeposit(${dep.id},'${esc(dep.username)}',${dep.amount})">✅ Approve</button>
+            <button class="act-btn act-ban"  onclick="rejectDeposit(${dep.id})">❌ Reject</button>
+          </div>` : '<span style="color:#4A5280">Done</span>'}
+        </td>
+      </tr>`).join('');
+  } catch(e) { toast(e.message, 'err'); }
+}
+
+function statusBadge(s) {
+  const map = { pending:'badge-yellow', approved:'badge-green', rejected:'badge-red' };
+  return `<span class="badge ${map[s]||'badge-gray'}">${s}</span>`;
+}
+
+async function approveDeposit(id, uname, amount) {
+  const ok = confirm(`✅ Approve ₹${amount} deposit for ${uname}?\nThis will credit their wallet immediately.`);
+  if (!ok) return;
+  try {
+    const r = await get(`/admin/deposits/${id}/approve?admin_key=${ADMIN_KEY}`);
+    toast(`✅ ₹${r.credited} credited to user #${r.user_id}`, 'ok');
+    loadDeposits('pending');
+  } catch(e) { toast(e.message, 'err'); }
+}
+
+async function rejectDeposit(id) {
+  openPopup('❌ Reject Deposit', 'Enter a reason for rejection (shown to player).', false, 'Reject', async () => {
+    const reason = document.getElementById('popup-note').value || 'UTR not verified';
+    try {
+      await get(`/admin/deposits/${id}/reject?admin_key=${ADMIN_KEY}&reason=${encodeURIComponent(reason)}`);
+      toast('Deposit rejected.', 'ok');
+      closePopup(); loadDeposits('pending');
+    } catch(e) { toast(e.message, 'err'); }
+  });
+}
+
+// ── Payouts ───────────────────────────────────────────────────────────────
+async function loadPayouts(status = 'pending') {
+  try {
+    const d = await get(`/admin/payouts?admin_key=${ADMIN_KEY}${status ? '&status=' + status : ''}`);
+    const tbody = document.getElementById('payouts-body');
+    if (!d.payouts.length) {
+      tbody.innerHTML = '<tr><td colspan="9" class="empty">No payouts in this category</td></tr>';
+      return;
+    }
+    tbody.innerHTML = d.payouts.map(p => {
+      const autoRelease = p.auto_release_at ? new Date(p.auto_release_at) : null;
+      const now = new Date();
+      const hoursLeft = autoRelease ? Math.max(0, ((autoRelease - now) / 3600000)).toFixed(1) : '—';
+      return `
+        <tr>
+          <td style="color:#7B8CB8;font-size:12px">#${p.id}</td>
+          <td><strong style="color:#fff">${esc(p.username)}</strong></td>
+          <td><span class="badge badge-purple">Game #${p.game_id}</span></td>
+          <td style="color:#A0A8CC">₹${p.gross_amount.toFixed(2)}</td>
+          <td style="color:#FF5252">₹${p.platform_fee.toFixed(2)}</td>
+          <td style="color:#43C59E;font-weight:900">₹${p.net_amount.toFixed(2)}</td>
+          <td style="font-size:12px;color:${hoursLeft > 0 ? '#FFD600' : '#43C59E'}">${hoursLeft}h left</td>
+          <td>${statusBadge(p.status)}</td>
+          <td>${p.status === 'pending' ? `
+            <div style="display:flex;gap:4px;flex-wrap:wrap">
+              <button class="act-btn act-add"  onclick="releasePayout(${p.id},'${esc(p.username)}',${p.net_amount})">✅ Release</button>
+              <button class="act-btn act-ban"  onclick="rejectPayout(${p.id},'${esc(p.username)}')">🚫 Reject</button>
+            </div>` : '<span style="color:#4A5280">Done</span>'}
+          </td>
+        </tr>`;
+    }).join('');
+  } catch(e) { toast(e.message, 'err'); }
+}
+
+async function releasePayout(id, uname, net) {
+  const ok = confirm(`✅ Release ₹${net} to ${uname}?\nOnly do this after reviewing their video footage and confirming no cheating.`);
+  if (!ok) return;
+  try {
+    const r = await get(`/admin/payouts/${id}/approve?admin_key=${ADMIN_KEY}`);
+    toast(`✅ ₹${r.released} released to user #${r.user_id}`, 'ok');
+    loadPayouts('pending');
+  } catch(e) { toast(e.message, 'err'); }
+}
+
+async function rejectPayout(id, uname) {
+  openPopup(
+    `🚫 Reject Payout for ${uname}`,
+    'Cheating confirmed via video? Enter reason. Type "BAN" in note to also ban account. Enter penalty amount to deduct from wallet.',
+    true, 'Reject & Penalise',
+    async () => {
+      const note = document.getElementById('popup-note').value || 'Cheating detected in video review';
+      const penalty = parseFloat(document.getElementById('popup-amount').value) || 0;
+      const doBan = note.toUpperCase().includes('BAN');
+      try {
+        const r = await get(`/admin/payouts/${id}/reject?admin_key=${ADMIN_KEY}&reason=${encodeURIComponent(note)}&penalty_amount=${penalty}&ban=${doBan}`);
+        toast(`🚫 Payout rejected. Withheld ₹${r.payout_withheld}. Penalty ₹${r.penalty_deducted}.${r.banned?' BANNED.':''}`, 'ok');
+        closePopup(); loadPayouts('pending');
+      } catch(e) { toast(e.message, 'err'); }
+    }
+  );
+}
+
+// ── Revenue ───────────────────────────────────────────────────────────────
+async function loadRevenue() {
+  try {
+    const r = await get(`/admin/revenue?admin_key=${ADMIN_KEY}`);
+    document.getElementById('rev-grid').innerHTML = `
+      <div class="stat-card green">
+        <div class="stat-icon">💰</div>
+        <div class="stat-val">₹${r.platform_fees_collected.toFixed(2)}</div>
+        <div class="stat-label">Platform Fees (10%)</div>
+      </div>
+      <div class="stat-card red">
+        <div class="stat-icon">🚫</div>
+        <div class="stat-val">₹${r.payouts_withheld.toFixed(2)}</div>
+        <div class="stat-label">Withheld (Cheaters)</div>
+      </div>
+      <div class="stat-card orange">
+        <div class="stat-icon">⚠️</div>
+        <div class="stat-val">₹${r.penalties_collected.toFixed(2)}</div>
+        <div class="stat-label">Penalty Collections</div>
+      </div>
+      <div class="stat-card yellow">
+        <div class="stat-icon">📈</div>
+        <div class="stat-val">₹${r.total_revenue.toFixed(2)}</div>
+        <div class="stat-label">Total Revenue</div>
+      </div>`;
+  } catch(e) { toast(e.message, 'err'); }
+}
+
+// ── Utils ─────────────────────────────────────────────────────────────────
+function fmtDate(iso) {
+  return new Date(iso).toLocaleString('en-IN', { dateStyle:'short', timeStyle:'short' });
+}
+function esc(s) {
+  if (s == null) return '';
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+</script>
+</body>
+</html>

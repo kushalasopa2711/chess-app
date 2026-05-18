@@ -1,0 +1,418 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>♟ ChessWager – Play Chess & Win!</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;700;800;900&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/static/style.css" />
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+</head>
+<body>
+
+<!-- ═══════════════════════════════════ NAV ════════════════════════════════ -->
+<nav id="navbar">
+  <div class="nav-inner">
+    <div class="nav-brand">
+      <span class="brand-chess">♟</span>
+      <span class="brand-name">ChessWager</span>
+    </div>
+    <div class="nav-center">
+      <a class="nav-link" data-view="lobby">🏠 Lobby</a>
+      <a class="nav-link" data-view="wallet">💰 Wallet</a>
+      <a class="nav-link" data-view="profile">👤 Profile</a>
+    </div>
+    <div class="nav-right">
+      <div class="nav-balance-chip">
+        <span>💰</span><span id="nav-balance">₹0.00</span>
+      </div>
+      <div class="nav-avatar" id="nav-avatar">?</div>
+      <button class="btn-logout" id="logout-btn">Logout 👋</button>
+    </div>
+  </div>
+</nav>
+
+<!-- ═════════════════════════════════ VIEWS ════════════════════════════════ -->
+<main id="app">
+
+  <!-- ── LANDING ─────────────────────────────────────────────────────────── -->
+  <section id="view-landing" class="view active">
+    <div class="landing-wrap">
+      <div class="landing-left">
+        <div class="landing-badge">🏆 India's Friendliest Chess Game</div>
+        <h1 class="landing-title">Play Chess.<br/>Win Rupees.<br/><span class="title-accent">Have Fun!</span></h1>
+        <p class="landing-desc">Challenge players, invest up to ₹100, and prove you're the best! Safe, fair, and super easy for everyone 🎉</p>
+        <div class="landing-chips">
+          <span class="chip">🧠 100% Fair Play</span>
+          <span class="chip">📹 Live Anti-Cheat</span>
+          <span class="chip">💰 Win Real Rupees</span>
+          <span class="chip">👶 Easy to Use</span>
+        </div>
+        <div class="landing-btns">
+          <button class="btn btn-primary btn-xl" onclick="showView('register')">🚀 Sign Up Free</button>
+          <button class="btn btn-ghost btn-xl" onclick="showView('login')">🔑 I have an account</button>
+        </div>
+      </div>
+      <div class="landing-right">
+        <div class="landing-board-preview" id="preview-board"></div>
+        <div class="floating-piece fp1">♔</div>
+        <div class="floating-piece fp2">♛</div>
+        <div class="floating-piece fp3">♞</div>
+        <div class="floating-piece fp4">♜</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── REGISTER ────────────────────────────────────────────────────────── -->
+  <section id="view-register" class="view">
+    <div class="auth-wrap">
+      <div class="auth-card">
+        <div class="auth-top-icon">🎮</div>
+        <h2 class="auth-title">Create Your Account!</h2>
+        <p class="auth-sub">Join thousands of chess players across India</p>
+        <form id="register-form" class="auth-form" autocomplete="off">
+          <div class="field-group">
+            <label class="field-label">👤 Pick a Username</label>
+            <input class="field-input" type="text" id="reg-username"
+              placeholder="e.g. ChessKing123" required minlength="3" maxlength="50"
+              pattern="[a-zA-Z0-9_]+" title="Letters, numbers and underscores only" />
+          </div>
+          <div class="field-group">
+            <label class="field-label">📧 Email Address</label>
+            <input class="field-input" type="email" id="reg-email"
+              placeholder="your@email.com" required />
+          </div>
+          <div class="field-group">
+            <label class="field-label">🔒 Password (min 8 characters)</label>
+            <input class="field-input" type="password" id="reg-password"
+              placeholder="Make it strong!" required minlength="8" />
+          </div>
+          <button type="submit" class="btn btn-primary btn-block btn-lg">
+            Create Account! 🚀
+          </button>
+        </form>
+        <p class="auth-switch">Already playing? <a href="#" onclick="showView('login')">Login here 🔑</a></p>
+        <a href="#" class="auth-back" onclick="showView('landing')">← Go back</a>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── LOGIN ──────────────────────────────────────────────────────────── -->
+  <section id="view-login" class="view">
+    <div class="auth-wrap">
+      <div class="auth-card">
+        <div class="auth-top-icon">♟</div>
+        <h2 class="auth-title">Welcome Back! 👋</h2>
+        <p class="auth-sub">Ready to play and win today?</p>
+        <form id="login-form" class="auth-form">
+          <div class="field-group">
+            <label class="field-label">👤 Username</label>
+            <input class="field-input" type="text" id="login-username"
+              placeholder="Your username" required />
+          </div>
+          <div class="field-group">
+            <label class="field-label">🔒 Password</label>
+            <input class="field-input" type="password" id="login-password"
+              placeholder="Your password" required />
+          </div>
+          <button type="submit" class="btn btn-primary btn-block btn-lg">
+            Let's Play! 🎮
+          </button>
+        </form>
+        <p class="auth-switch">No account? <a href="#" onclick="showView('register')">Sign up free 🚀</a></p>
+        <a href="#" class="auth-back" onclick="showView('landing')">← Go back</a>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── LOBBY ──────────────────────────────────────────────────────────── -->
+  <section id="view-lobby" class="view">
+    <div class="page-wrap">
+      <div class="page-header">
+        <div>
+          <h2 class="page-title">🏠 Game Lobby</h2>
+          <p class="page-sub">Find a game or start your own!</p>
+        </div>
+        <button class="btn btn-primary btn-lg" id="create-game-btn">♟ New Game</button>
+      </div>
+
+      <!-- Quick stats -->
+      <div class="stats-row" id="lobby-stats">
+        <div class="stat-pill">🎮 <span id="ls-played">0</span> Played</div>
+        <div class="stat-pill win">🏆 <span id="ls-wins">0</span> Wins</div>
+        <div class="stat-pill money">💰 <span id="ls-balance">₹0</span> Balance</div>
+        <div class="stat-pill rate">📊 <span id="ls-rate">0%</span> Win Rate</div>
+      </div>
+
+      <!-- Tab bar -->
+      <div class="tab-bar">
+        <button class="tab active" data-tab="waiting">⏳ Open Games</button>
+        <button class="tab" data-tab="active">⚔️ Live Now</button>
+        <button class="tab" data-tab="completed">✅ Finished</button>
+      </div>
+
+      <div id="games-grid" class="games-grid">
+        <div class="empty-state">Loading games… ♟</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── GAME ───────────────────────────────────────────────────────────── -->
+  <section id="view-game" class="view">
+    <div class="game-wrap">
+
+      <!-- Left: board + players -->
+      <div class="board-col">
+        <!-- Opponent -->
+        <div class="player-row" id="opponent-row">
+          <div class="player-ava" id="opp-ava">♟</div>
+          <div class="player-meta">
+            <div class="player-name" id="opp-name">Waiting for opponent…</div>
+            <div class="player-thinking" id="opp-think"></div>
+          </div>
+          <div class="player-captured" id="opp-captured"></div>
+        </div>
+
+        <!-- Board container -->
+        <div class="board-container">
+          <div class="rank-labels" id="rank-labels"></div>
+          <div id="chess-board"></div>
+        </div>
+        <div class="file-labels" id="file-labels"></div>
+
+        <!-- Me -->
+        <div class="player-row my-row" id="my-row">
+          <div class="player-ava my-ava" id="my-ava">♔</div>
+          <div class="player-meta">
+            <div class="player-name" id="my-name">You</div>
+            <div class="player-thinking" id="my-think"></div>
+          </div>
+          <div class="player-captured" id="my-captured"></div>
+        </div>
+      </div>
+
+      <!-- Right: info panel -->
+      <div class="info-col">
+
+        <!-- Turn banner -->
+        <div class="turn-banner" id="turn-banner">
+          <div class="turn-dot" id="turn-dot"></div>
+          <span id="turn-text">Waiting for opponent to join…</span>
+        </div>
+
+        <!-- Bet / Prize -->
+        <div class="prize-card">
+          <div class="prize-label">💰 Prize Pool</div>
+          <div class="prize-amount" id="prize-amount">₹0.00</div>
+          <div class="prize-note">Winner takes all!</div>
+        </div>
+
+        <!-- Webcam -->
+        <div class="cam-card" id="cam-card">
+          <div class="cam-header">
+            <div class="rec-indicator">
+              <div class="rec-dot"></div>
+              <span>REC</span>
+            </div>
+            <span class="cam-title">📹 Fair Play Camera</span>
+          </div>
+          <video id="cam-preview" autoplay muted playsinline></video>
+          <div class="cam-status" id="cam-status">Camera not started</div>
+          <button class="btn btn-sm btn-cam" id="start-cam-btn">📷 Enable Camera</button>
+        </div>
+
+        <!-- Move history -->
+        <div class="moves-card">
+          <div class="moves-header">📝 Move History</div>
+          <div id="moves-list" class="moves-list"></div>
+        </div>
+
+        <!-- Actions -->
+        <div class="game-actions">
+          <button class="btn btn-danger" id="resign-btn">🏳️ Resign</button>
+          <button class="btn btn-secondary btn-sm" id="copy-game-link">🔗 Invite</button>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── WALLET ─────────────────────────────────────────────────────────── -->
+  <section id="view-wallet" class="view">
+    <div class="page-wrap">
+      <div class="page-header">
+        <div>
+          <h2 class="page-title">💰 My Wallet</h2>
+          <p class="page-sub">Deposit, withdraw, and track your money</p>
+        </div>
+      </div>
+
+      <!-- Balance hero -->
+      <div class="balance-hero">
+        <div class="balance-coin">💰</div>
+        <div class="balance-label">Available Balance</div>
+        <div class="balance-big" id="w-balance">₹0.00</div>
+        <div class="balance-locked-row">
+          <span>🔒 In active games:</span>
+          <strong id="w-locked">₹0.00</strong>
+        </div>
+        <div class="balance-track">
+          <div class="balance-progress" id="w-progress" style="width:0%"></div>
+        </div>
+        <div class="balance-max-label">Max wallet: ₹100 &nbsp;|&nbsp; No credit cards needed</div>
+      </div>
+
+      <!-- Quick amounts -->
+      <div class="quick-grid">
+        <button class="quick-chip" data-amount="10">+₹10</button>
+        <button class="quick-chip" data-amount="25">+₹25</button>
+        <button class="quick-chip" data-amount="50">+₹50</button>
+        <button class="quick-chip active" data-amount="100">+₹100</button>
+      </div>
+
+      <!-- Deposit / Withdraw cards -->
+      <div class="wallet-cards">
+        <!-- UPI Deposit -->
+        <div class="wallet-action-card" id="upi-card">
+          <div class="wac-icon">📱</div>
+          <h3>Add Money via UPI</h3>
+          <p>Pay with Google Pay or PhonePe</p>
+          <div class="field-group">
+            <input class="field-input" type="number" id="deposit-amount"
+              placeholder="Amount (₹10 – ₹100)" min="10" max="100" step="1" />
+          </div>
+          <button class="btn btn-primary btn-block" id="show-qr-btn">Generate QR Code 📱</button>
+
+          <!-- QR section (shown after clicking) -->
+          <div id="qr-section" style="display:none;margin-top:18px;text-align:center">
+            <div style="font-size:13px;color:#7578A8;margin-bottom:10px">Scan with Google Pay or PhonePe</div>
+            <div id="qr-code" style="display:inline-block;background:white;padding:12px;border-radius:12px"></div>
+            <div style="margin-top:10px;font-size:13px;font-weight:700;color:#5349D1" id="upi-id-display"></div>
+            <div style="margin-top:18px;text-align:left">
+              <label class="field-label">✅ Enter UTR / Transaction ID</label>
+              <input class="field-input" type="text" id="utr-input"
+                placeholder="e.g. 406123456789" maxlength="50" style="margin-bottom:8px"/>
+              <div style="font-size:12px;color:#7578A8;margin-bottom:10px">
+                📋 Find UTR in your Google Pay / PhonePe payment history
+              </div>
+              <button class="btn btn-primary btn-block" id="submit-utr-btn">Submit Deposit Request ✅</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Withdraw + pending info -->
+        <div>
+          <div class="wallet-action-card" style="margin-bottom:16px">
+            <div class="wac-icon">🏆</div>
+            <h3>Pending Payouts</h3>
+            <p>Winnings held for 24h video review</p>
+            <div id="payouts-list" style="margin-top:12px">
+              <div style="font-size:13px;color:#7578A8">Loading…</div>
+            </div>
+          </div>
+          <div class="wallet-action-card">
+            <div class="wac-icon">🏦</div>
+            <h3>Withdraw</h3>
+            <p>Take out confirmed winnings</p>
+            <div class="field-group">
+              <input class="field-input" type="number" id="withdraw-amount"
+                placeholder="Amount to withdraw" min="1" step="1" />
+            </div>
+            <button class="btn btn-secondary btn-block" id="withdraw-btn">Withdraw 🏦</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- My deposit requests -->
+      <div class="tx-section">
+        <h3 class="tx-title">📋 My Deposit Requests</h3>
+        <div id="my-deposits-list" class="tx-list"></div>
+      </div>
+
+      <!-- Transactions -->
+      <div class="tx-section">
+        <h3 class="tx-title">📜 Recent Transactions</h3>
+        <div id="tx-list" class="tx-list">
+          <div class="empty-state">No transactions yet 😊</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── PROFILE ────────────────────────────────────────────────────────── -->
+  <section id="view-profile" class="view">
+    <div class="page-wrap">
+      <div class="page-header">
+        <h2 class="page-title">👤 My Profile</h2>
+      </div>
+
+      <div class="profile-hero">
+        <div class="profile-big-ava" id="p-avatar">♟</div>
+        <div class="profile-username" id="p-username">Loading…</div>
+        <div class="profile-email" id="p-email"></div>
+        <div class="profile-since" id="p-since"></div>
+      </div>
+
+      <div class="stats-cards">
+        <div class="stats-card">
+          <div class="sc-icon">♟</div>
+          <div class="sc-val" id="p-played">0</div>
+          <div class="sc-label">Games Played</div>
+        </div>
+        <div class="stats-card win-card">
+          <div class="sc-icon">🏆</div>
+          <div class="sc-val" id="p-wins">0</div>
+          <div class="sc-label">Wins</div>
+        </div>
+        <div class="stats-card money-card">
+          <div class="sc-icon">💰</div>
+          <div class="sc-val" id="p-earned">₹0</div>
+          <div class="sc-label">Total Earned</div>
+        </div>
+        <div class="stats-card rate-card">
+          <div class="sc-icon">📊</div>
+          <div class="sc-val" id="p-rate">0%</div>
+          <div class="sc-label">Win Rate</div>
+        </div>
+      </div>
+
+      <div id="p-flags-wrap" style="display:none">
+        <h3 class="tx-title">⚠️ Anti-Cheat Notices</h3>
+        <div id="p-flags"></div>
+      </div>
+    </div>
+  </section>
+
+</main><!-- #app -->
+
+<!-- ═══════════════════════════ MODAL ════════════════════════════════════ -->
+<div id="modal-overlay" class="modal-overlay">
+  <div class="modal-box" id="modal-box">
+    <div class="modal-icon" id="modal-icon">❓</div>
+    <h3 class="modal-title" id="modal-title">Title</h3>
+    <p class="modal-body" id="modal-body">Body text here</p>
+    <div class="modal-feet">
+      <button class="btn btn-ghost" id="modal-cancel">Cancel</button>
+      <button class="btn btn-primary" id="modal-ok">OK</button>
+    </div>
+  </div>
+</div>
+
+<!-- ════════════════════════ GAME RESULT ════════════════════════════════ -->
+<div id="result-overlay" class="result-overlay">
+  <div class="result-box">
+    <div class="result-big-icon" id="res-icon">🏆</div>
+    <h1 class="result-title" id="res-title">You Won!</h1>
+    <p class="result-msg" id="res-msg">Amazing game!</p>
+    <div class="result-prize" id="res-prize"></div>
+    <button class="btn btn-primary btn-xl" onclick="App.goLobby()">Back to Lobby 🏠</button>
+  </div>
+  <canvas id="confetti-canvas"></canvas>
+</div>
+
+<!-- ═══════════════════════ TOAST CONTAINER ══════════════════════════════ -->
+<div id="toasts"></div>
+
+<script src="/static/app.js"></script>
+</body>
+</html>
