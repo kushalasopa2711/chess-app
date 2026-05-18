@@ -317,6 +317,33 @@ a:hover { text-decoration: underline; }
 }
 .board-col { display: flex; flex-direction: column; align-items: center; gap: 12px; }
 
+.chess-clocks {
+  display: flex;
+  justify-content: space-between;
+  width: 100%;
+  max-width: 528px;
+  gap: 12px;
+}
+.clock-box {
+  flex: 1;
+  background: #1a1d2e;
+  color: #fff;
+  border-radius: var(--r);
+  padding: 10px 14px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-weight: 800;
+  box-shadow: var(--shadow);
+}
+.clock-box.clock-active {
+  outline: 3px solid var(--p);
+  background: #252845;
+}
+.clock-box.clock-low .clock-val { color: #ff8585; }
+.clock-label { font-size: 11px; opacity: 0.85; text-transform: uppercase; letter-spacing: 0.04em; }
+.clock-val { font-family: ui-monospace, Consolas, monospace; font-size: 1.25rem; letter-spacing: 0.06em; }
+
 .player-row {
   display: flex; align-items: center; gap: 12px;
   width: 100%; max-width: 528px;

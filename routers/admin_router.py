@@ -12,16 +12,19 @@ Endpoints:
   GET  /admin/games              – all games (paginated)
   GET  /admin/flags              – all anti-cheat flags
   GET  /admin/penalties          – all applied penalties
-  GET  /admin/videos             – all recorded video chunks
+  GET  /admin/videos             – recorded video sessions (grouped by game + user)
+  GET  /admin/videos/{id}/file   – download/stream one segment (WebM) for review
 """
 from __future__ import annotations
 
 import os
 from datetime import datetime
+from pathlib import Path
 from typing import Optional
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query
-from sqlalchemy import delete, func, select
+from fastapi.responses import FileResponse
+from sqlalchemy import case, delete, func, select, tuple_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import get_db
@@ -29,9 +32,11 @@ from models import (
     AntiCheatFlag, DepositRequest, Game, GameStatus, Move, Penalty,
     PendingPayout, Transaction, TransactionType, User, VideoChunk, Wallet,
 )
+from video_evidence import payout_video_requirement_error, video_evidence_summary_for_admin
 
 router = APIRouter(prefix="/admin", tags=["Admin"])
 ADMIN_SECRET = os.getenv("ADMIN_SECRET", "admin-secret-change-me")
+VIDEOS_STORAGE_ROOT = Path("videos").resolve()
 
 
 def _auth(key: Optional[str]) -> None:
@@ -58,6 +63,13 @@ async def stats(
     total_flags     = (await db.execute(select(func.count(AntiCheatFlag.id)))).scalar_one()
     severe_flags    = (await db.execute(select(func.count(AntiCheatFlag.id)).where(AntiCheatFlag.severity == 3))).scalar_one()
     total_videos    = (await db.execute(select(func.count(VideoChunk.id)))).scalar_one()
+    video_sessions  = (await db.execute(
+        select(func.count()).select_from(
+            select(VideoChunk.game_id, VideoChunk.user_id)
+            .group_by(VideoChunk.game_id, VideoChunk.user_id)
+            .subquery()
+        )
+    )).scalar_one()
     flagged_videos  = (await db.execute(select(func.count(VideoChunk.id)).where(VideoChunk.flagged == True))).scalar_one()
 
     # Total money in the system (sum of all wallet balances)
@@ -100,6 +112,7 @@ async def stats(
             "total_flags": total_flags,
             "severe_flags": severe_flags,
             "video_chunks": total_videos,
+            "video_sessions": video_sessions,
             "flagged_videos": flagged_videos,
         },
     }
@@ -438,33 +451,132 @@ async def list_videos(
 ):
     _auth(admin_key)
 
-    q = select(VideoChunk, User, Game)\
-        .join(User, User.id == VideoChunk.user_id)\
-        .join(Game, Game.id == VideoChunk.game_id)
+    flag_sum = func.sum(case((VideoChunk.flagged.is_(True), 1), else_=0))
+
+    agg = (
+        select(
+            VideoChunk.game_id,
+            VideoChunk.user_id,
+            func.count(VideoChunk.id).label("segments"),
+            func.coalesce(func.sum(VideoChunk.file_size_bytes), 0).label("total_bytes"),
+            func.min(VideoChunk.created_at).label("session_start"),
+            func.max(VideoChunk.created_at).label("session_end"),
+            flag_sum.label("flag_count"),
+        )
+        .group_by(VideoChunk.game_id, VideoChunk.user_id)
+    )
     if flagged_only:
-        q = q.where(VideoChunk.flagged == True)
-    q = q.order_by(VideoChunk.created_at.desc()).offset((page-1)*per_page).limit(per_page)
-    rows = (await db.execute(q)).all()
-    total = (await db.execute(select(func.count(VideoChunk.id)))).scalar_one()
+        agg = agg.having(flag_sum > 0)
+
+    agg_sub = agg.subquery()
+
+    total = (await db.execute(select(func.count()).select_from(agg_sub))).scalar_one()
+    total_chunks = (await db.execute(select(func.count(VideoChunk.id)))).scalar_one()
+
+    page_stmt = (
+        select(
+            agg_sub.c.game_id,
+            agg_sub.c.user_id,
+            agg_sub.c.segments,
+            agg_sub.c.total_bytes,
+            agg_sub.c.session_start,
+            agg_sub.c.session_end,
+            agg_sub.c.flag_count,
+            User.username,
+            Game.bet_amount,
+        )
+        .join(User, User.id == agg_sub.c.user_id)
+        .join(Game, Game.id == agg_sub.c.game_id)
+        .order_by(agg_sub.c.session_end.desc())
+        .offset((page - 1) * per_page)
+        .limit(per_page)
+    )
+    page_rows = (await db.execute(page_stmt)).all()
+
+    pairs = [(r.game_id, r.user_id) for r in page_rows]
+    by_pair: dict[tuple[int, int], list[VideoChunk]] = {}
+    if pairs:
+        chunks_all = (
+            (
+                await db.execute(
+                    select(VideoChunk).where(
+                        tuple_(VideoChunk.game_id, VideoChunk.user_id).in_(pairs)
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        for vc in chunks_all:
+            by_pair.setdefault((vc.game_id, vc.user_id), []).append(vc)
+        for key in by_pair:
+            by_pair[key].sort(key=lambda c: (c.chunk_number, c.id))
+
+    sessions: list[dict] = []
+    for r in page_rows:
+        vcs = by_pair.get((r.game_id, r.user_id), [])
+        chunk_ids = [vc.id for vc in vcs]
+        flagged_any = any(vc.flagged for vc in vcs)
+        fr = next(
+            (vc.flag_reason for vc in vcs if vc.flagged and vc.flag_reason),
+            None,
+        )
+        file_paths = [vc.file_path for vc in vcs]
+        sessions.append(
+            {
+                "chunk_ids": chunk_ids,
+                "primary_chunk_id": chunk_ids[-1] if chunk_ids else None,
+                "game_id": r.game_id,
+                "user_id": r.user_id,
+                "username": r.username,
+                "segments": int(r.segments),
+                "total_size_kb": round(float(r.total_bytes or 0) / 1024, 1),
+                "session_start": r.session_start.isoformat() if r.session_start else None,
+                "session_end": r.session_end.isoformat() if r.session_end else None,
+                "bet_amount": float(r.bet_amount),
+                "flagged": flagged_any,
+                "flag_reason": fr,
+                "file_paths": file_paths,
+            }
+        )
 
     return {
         "total": total,
-        "videos": [
-            {
-                "id": vc.id,
-                "game_id": vc.game_id,
-                "user_id": vc.user_id,
-                "username": u.username,
-                "chunk_number": vc.chunk_number,
-                "size_kb": round(vc.file_size_bytes / 1024, 1),
-                "flagged": vc.flagged,
-                "flag_reason": vc.flag_reason,
-                "bet_amount": g.bet_amount,
-                "created_at": vc.created_at.isoformat(),
-            }
-            for vc, u, g in rows
-        ],
+        "total_chunks": total_chunks,
+        "sessions": sessions,
     }
+
+
+@router.get("/videos/{chunk_id}/file")
+async def stream_video_chunk(
+    chunk_id: int,
+    admin_key: str = Query(""),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Stream or download a single recorded WebM chunk for manual review.
+    Files live under ./videos/{game_id}/{user_id}/ on the server by default.
+    """
+    _auth(admin_key)
+    vc_r = await db.execute(select(VideoChunk).where(VideoChunk.id == chunk_id))
+    vc = vc_r.scalar_one_or_none()
+    if not vc:
+        raise HTTPException(status_code=404, detail="Chunk not found.")
+    path = Path(vc.file_path).resolve()
+    try:
+        path.relative_to(VIDEOS_STORAGE_ROOT)
+    except ValueError:
+        raise HTTPException(status_code=403, detail="Recording path is outside videos/ storage.")
+    if not path.is_file():
+        raise HTTPException(
+            status_code=404,
+            detail="Recording file missing on disk (path may differ after deploy or cleanup).",
+        )
+    return FileResponse(
+        path,
+        media_type="video/webm",
+        filename=f"game{vc.game_id}_user{vc.user_id}_chunk{vc.chunk_number:04d}.webm",
+    )
 
 
 # ── Deposit requests ──────────────────────────────────────────────────────────
@@ -574,26 +686,30 @@ async def list_payouts(
     rows = (await db.execute(q)).all()
     total = (await db.execute(select(func.count(PendingPayout.id)))).scalar_one()
 
+    payouts_out = []
+    for p, u, g in rows:
+        vsum = await video_evidence_summary_for_admin(db, g)
+        payouts_out.append({
+            "id": p.id,
+            "user_id": p.user_id,
+            "username": u.username,
+            "game_id": p.game_id,
+            "bet_amount": g.bet_amount,
+            "is_vs_cpu": g.is_vs_cpu,
+            "gross_amount": p.gross_amount,
+            "platform_fee": p.platform_fee,
+            "net_amount": p.net_amount,
+            "status": p.status,
+            "rejection_reason": p.rejection_reason,
+            "penalty_amount": p.penalty_amount,
+            "auto_release_at": p.auto_release_at.isoformat() if p.auto_release_at else None,
+            "created_at": p.created_at.isoformat(),
+            **vsum,
+        })
+
     return {
         "total": total,
-        "payouts": [
-            {
-                "id": p.id,
-                "user_id": p.user_id,
-                "username": u.username,
-                "game_id": p.game_id,
-                "bet_amount": g.bet_amount,
-                "gross_amount": p.gross_amount,
-                "platform_fee": p.platform_fee,
-                "net_amount": p.net_amount,
-                "status": p.status,
-                "rejection_reason": p.rejection_reason,
-                "penalty_amount": p.penalty_amount,
-                "auto_release_at": p.auto_release_at.isoformat() if p.auto_release_at else None,
-                "created_at": p.created_at.isoformat(),
-            }
-            for p, u, g in rows
-        ],
+        "payouts": payouts_out,
     }
 
 
@@ -611,6 +727,13 @@ async def approve_payout(
         raise HTTPException(status_code=404, detail="Payout not found.")
     if pay.status != "pending":
         raise HTTPException(status_code=400, detail=f"Already {pay.status}.")
+
+    game_r = await db.execute(select(Game).where(Game.id == pay.game_id))
+    game = game_r.scalar_one_or_none()
+    if game:
+        block = await payout_video_requirement_error(db, game)
+        if block:
+            raise HTTPException(status_code=400, detail=block)
 
     wallet_r = await db.execute(select(Wallet).where(Wallet.user_id == pay.user_id))
     wallet = wallet_r.scalar_one_or_none()

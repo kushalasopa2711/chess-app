@@ -48,6 +48,7 @@ class User(Base):
     games_played = Column(Integer, default=0)
     games_won = Column(Integer, default=0)
     total_earned = Column(Float, default=0.0)
+    is_bot = Column(Boolean, default=False)  # system CPU account — no real wallet flows
 
     wallet = relationship("Wallet", back_populates="user", uselist=False)
     transactions = relationship("Transaction", back_populates="user")
@@ -92,6 +93,13 @@ class Game(Base):
     bet_amount = Column(Float, nullable=False)
     winner_id = Column(Integer, ForeignKey("users.id"), nullable=True)
     result = Column(String(20), nullable=True)  # "white", "black", "draw"
+    is_vs_cpu = Column(Boolean, default=False)
+    video_prize_terms_ack = Column(Boolean, default=False)
+    clock_initial_sec = Column(Integer, default=600)
+    clock_increment_sec = Column(Integer, default=5)
+    white_time_ms = Column(Integer, default=600_000)
+    black_time_ms = Column(Integer, default=600_000)
+    clock_last_tick_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     started_at = Column(DateTime, nullable=True)
     ended_at = Column(DateTime, nullable=True)
@@ -133,7 +141,7 @@ class AntiCheatFlag(Base):
 
 
 class VideoChunk(Base):
-    """Stores metadata for each 30-second webcam recording chunk uploaded during a bet game."""
+    """Stores metadata for each webcam recording segment uploaded during a bet game."""
     __tablename__ = "video_chunks"
 
     id = Column(Integer, primary_key=True, index=True)

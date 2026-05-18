@@ -24,6 +24,8 @@ const S = {
   boardFlip:  false,      // true when playing as black
   video:      null,       // VideoMonitor instance
   tabHiddenAt: null,
+  clockTimer: null,       // setInterval id for live clock display
+  clock:      { whiteMs: 0, blackMs: 0, turn: 'w', syncAt: 0 },
 };
 
 // ── Piece unicode map ────────────────────────────────────────────────────────
@@ -73,10 +75,28 @@ const API = {
   myDepositReqs:   ()       => API.get('/deposit/my-requests'),
   myPayouts:       ()       => API.get('/deposit/my-payouts'),
   getGames:        (st)     => API.get(`/games${st?'?status='+st:''}`),
-  createGame:      (bet)    => API.post('/games',           {bet_amount:bet}),
+  createGame:      (opts)   => API.post('/games', opts),
   getGame:         (id)     => API.get(`/games/${id}`),
   joinGame:        (id)     => API.post(`/games/${id}/join`),
-  makeMove:        (id,mv)  => API.post(`/games/${id}/move`, {move:mv, client_timestamp:Date.now()}),
+  cancelGame:      (id)     => API.post(`/games/${id}/cancel`, {}),
+  makeMove:        async (id, mv) => {
+    const headers = { 'Content-Type': 'application/json' };
+    if (S.token) headers['Authorization'] = `Bearer ${S.token}`;
+    const res = await fetch(BASE + `/games/${id}/move`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ move: mv, client_timestamp: Date.now() }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      const det = data.detail;
+      const msg = typeof det === 'string' ? det
+        : Array.isArray(det) ? det.map((x) => x.msg || JSON.stringify(x)).join('; ')
+        : `HTTP ${res.status}`;
+      throw new Error(msg);
+    }
+    return data;
+  },
   resign:          (id)     => API.post(`/games/${id}/resign`),
   getUser:         (id)     => API.get(`/users/${id}`),
   myFlags:         ()       => API.get('/users/me/flags'),
@@ -148,6 +168,62 @@ function showView(name) {
     l.classList.toggle('active', l.dataset.view === name);
   });
   window.scrollTo(0, 0);
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+//  Chess clock (client-side smooth display — server sends authoritative ms)
+// ════════════════════════════════════════════════════════════════════════════
+function formatClock(ms) {
+  ms = Math.max(0, Math.floor(ms));
+  const s = Math.ceil(ms / 1000);
+  const m = Math.floor(s / 60);
+  const r = s % 60;
+  return `${m}:${r.toString().padStart(2, '0')}`;
+}
+
+function syncClockFromGame() {
+  if (!S.game || S.game.status !== 'active') return;
+  const { turn } = parseFEN(S.game.fen);
+  S.clock.whiteMs = S.game.white_time_ms ?? 600000;
+  S.clock.blackMs = S.game.black_time_ms ?? 600000;
+  S.clock.turn = turn;
+  S.clock.syncAt = Date.now();
+  updateClockDisplay();
+}
+
+function updateClockDisplay() {
+  const wEl = document.getElementById('clock-white-val');
+  const bEl = document.getElementById('clock-black-val');
+  const wBox = document.getElementById('clock-white');
+  const bBox = document.getElementById('clock-black');
+  if (!wEl || !bEl) return;
+
+  const elapsed = Date.now() - S.clock.syncAt;
+  let w = S.clock.whiteMs;
+  let b = S.clock.blackMs;
+  if (S.clock.turn === 'w') w = Math.max(0, w - elapsed);
+  else b = Math.max(0, b - elapsed);
+
+  wEl.textContent = formatClock(w);
+  bEl.textContent = formatClock(b);
+
+  const low = 30000;
+  wBox.classList.toggle('clock-low', w < low);
+  bBox.classList.toggle('clock-low', b < low);
+  wBox.classList.toggle('clock-active', S.clock.turn === 'w');
+  bBox.classList.toggle('clock-active', S.clock.turn === 'b');
+}
+
+function startClockTicker() {
+  stopClockTicker();
+  S.clockTimer = setInterval(updateClockDisplay, 200);
+}
+
+function stopClockTicker() {
+  if (S.clockTimer) {
+    clearInterval(S.clockTimer);
+    S.clockTimer = null;
+  }
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -298,6 +374,11 @@ async function sendMove(move) {
       S.selected = null;
       S.lastFrom = from;
       S.lastTo   = to;
+      if (res.time_forfeit) {
+        await refreshGame();
+        showResult(res.result, 'time_forfeit');
+        return;
+      }
       await refreshGame();
     } catch(e) {
       Toast.err(`Move error: ${e.message}`);
@@ -339,10 +420,11 @@ async function handleWSMessage(msg) {
   }
 
   if (type === 'game_started') {
-    Toast.ok('Opponent joined! Game is starting 🎉');
+    const vsCpu = data.is_vs_cpu;
+    Toast.ok(vsCpu ? 'Playing versus computer! You have White ♟' : 'Opponent joined! Game is starting 🎉');
     await refreshGame();
     updateTurnBanner();
-    if (S.game.bet_amount > 0) promptWebcam();
+    if (S.game.bet_amount > 0 && S.myColor) promptWebcam();
   }
 
   if (type === 'move') {
@@ -352,11 +434,17 @@ async function handleWSMessage(msg) {
     S.selected = null;
     renderBoard(S.game.fen);
     appendMoveToList(data.move_san, data.move_number, data.player_id);
+    if (data.white_time_ms != null && data.black_time_ms != null) {
+      S.clock.whiteMs = data.white_time_ms;
+      S.clock.blackMs = data.black_time_ms;
+      S.clock.turn = parseFEN(data.fen).turn;
+      S.clock.syncAt = Date.now();
+      updateClockDisplay();
+    }
     updateTurnBanner(data);
-    if (data.player_id !== S.user.id) playSound('move');
+    if (data.player_id !== S.user?.id) playSound('move');
     if (data.game_over) {
       await refreshGame();
-      showResult(data.result);
     }
   }
 
@@ -399,6 +487,16 @@ async function refreshGame() {
   updatePlayerCards();
   renderMoveList();
   updatePrize();
+  if (S.game.status === 'active') {
+    syncClockFromGame();
+    startClockTicker();
+  } else {
+    stopClockTicker();
+    const wEl = document.getElementById('clock-white-val');
+    const bEl = document.getElementById('clock-black-val');
+    if (wEl) wEl.textContent = '—';
+    if (bEl) bEl.textContent = '—';
+  }
 }
 
 function updateTurnBanner(moveData) {
@@ -408,12 +506,21 @@ function updateTurnBanner(moveData) {
 
   if (S.game.status === 'waiting') {
     dot.className = 'turn-dot waiting';
-    text.textContent = '⏳ Waiting for an opponent to join…';
+    text.textContent = S.game.is_vs_cpu
+      ? 'Starting…'
+      : '⏳ Waiting for an opponent to join…';
     return;
   }
   if (S.game.status === 'completed') {
     dot.className = 'turn-dot';
     text.textContent = '✅ Game finished!';
+    return;
+  }
+
+  if (S.game.status === 'active' && !S.myColor) {
+    dot.className = 'turn-dot';
+    const { turn } = parseFEN(S.game.fen);
+    text.textContent = turn === 'w' ? '👀 White to move' : '👀 Black to move';
     return;
   }
 
@@ -426,7 +533,10 @@ function updateTurnBanner(moveData) {
     text.textContent = '🟢 Your turn! Make a move.';
   } else {
     dot.className = 'turn-dot opp-turn';
-    text.textContent = '⏳ Opponent is thinking…';
+    const thinking = S.game.is_vs_cpu && S.myColor === 'white'
+      ? 'Computer is thinking…'
+      : 'Opponent is thinking…';
+    text.textContent = '⏳ ' + thinking;
   }
 }
 
@@ -480,10 +590,35 @@ function showResult(result, reason) {
   const msg     = document.getElementById('res-msg');
   const prize   = document.getElementById('res-prize');
 
+  const lossQuotes = [
+    '“Every chess master was once a beginner.” Keep practising — your next game is another step forward.',
+    '“The blunders are all there on the board, waiting to be made.” — Savielly Tartakower. Study the game, and you’ll spot more of them next time.',
+    'A loss is just feedback. Strong players treat every game as a lesson in disguise.',
+  ];
+  const randomQuote = lossQuotes[Math.floor(Math.random() * lossQuotes.length)];
+
   let isWin = false;
   if (result === 'white' && S.myColor === 'white') isWin = true;
   if (result === 'black' && S.myColor === 'black') isWin = true;
   const isDraw = result === 'draw';
+
+  const reasonNote = (() => {
+    if (reason === 'time_forfeit') return ' (on time)';
+    if (reason === 'resignation') return ' (resignation)';
+    return '';
+  })();
+
+  if (S.myColor == null) {
+    icon.textContent = '👀';
+    title.textContent = isDraw ? "It's a Draw!" : 'Game over';
+    msg.textContent = isDraw
+      ? 'This game ended in a draw.'
+      : (result === 'white' ? 'White won this game.' : 'Black won this game.');
+    prize.textContent = '';
+    overlay.classList.add('open');
+    if (S.video) { S.video.stop(); S.video = null; }
+    return;
+  }
 
   if (isDraw) {
     icon.textContent  = '🤝';
@@ -493,13 +628,22 @@ function showResult(result, reason) {
   } else if (isWin) {
     icon.textContent  = '🏆';
     title.textContent = 'You Won!!! 🎉';
-    msg.textContent   = `Amazing! You beat your opponent${reason === 'resignation' ? ' (they resigned)' : ''}!`;
-    prize.textContent = `+₹${(S.game.bet_amount*2).toFixed(2)} added to wallet!`;
+    const pvpExtra = (S.game && !S.game.is_vs_cpu)
+      ? ' Head-to-head games require usable video from both you and your opponent for verification.'
+      : '';
+    msg.textContent =
+      `Great game — you earned this${reasonNote}. ` +
+      'Within 24 hours, your winnings can be credited to your wallet after our review confirms a legitimate win (fair play and any required video checks). ' +
+      'If something doesn’t meet the rules, the payout may be held or not approved.' + pvpExtra;
+    prize.textContent = `Up to ₹${(S.game.bet_amount * 2).toFixed(2)} (after platform fee) · pending payout`;
     spawnConfetti();
   } else {
-    icon.textContent  = '😢';
+    icon.textContent  = '♟';
     title.textContent = 'Better luck next time!';
-    msg.textContent   = `You lost this game. Keep practicing — you'll win next time!`;
+    const lossLead = reason === 'time_forfeit'
+      ? 'The clock ran out this time — manage your time and try again. '
+      : `Tough game${reasonNote}. `;
+    msg.textContent = lossLead + randomQuote;
     prize.textContent = '';
   }
 
@@ -544,14 +688,16 @@ class VideoMonitor {
     const mimeType = MediaRecorder.isTypeSupported('video/webm;codecs=vp8')
       ? 'video/webm;codecs=vp8' : 'video/webm';
 
+    const chunkIndex = this.chunkNum++;
     this.recorder = new MediaRecorder(this.stream, { mimeType, videoBitsPerSecond: 500000 });
     this.recorder.ondataavailable = (e) => {
       if (e.data && e.data.size > 1000) {
-        API.uploadChunk(this.gameId, e.data, this.chunkNum++)
+        API.uploadChunk(this.gameId, e.data, chunkIndex)
            .catch(err => console.warn('Chunk upload failed:', err));
       }
     };
-    this.recorder.start(30000);  // 30-second chunks
+    // One WebM blob for the whole recording run (until stop) — admin sees one row per session per camera start.
+    this.recorder.start();
   }
 
   stop() {
@@ -566,12 +712,16 @@ class VideoMonitor {
 }
 
 async function promptWebcam() {
+  const vsCpu = S.game?.is_vs_cpu;
+  const body = vsCpu
+    ? `Recording helps approve your win. For vs-computer games, only your side needs usable video on file. If it is missing or unclear, the payout may be denied. (₹${S.game.bet_amount} table)`
+    : `Multiplayer: reviewers need usable video from both you and your opponent on the server before a win can be paid. Turn your camera on; one continuous clip uploads when the game ends or you stop the camera. If either side has no usable recording, payouts may be denied. (₹${S.game.bet_amount} table)`;
   const confirmed = await Modal.show(
     '📹',
-    'Enable Camera for Fair Play',
-    `This is a real-money game (₹${S.game.bet_amount}). Fair play requires your webcam to be on during the game. Your video is saved as evidence only and is never shared publicly.`,
+    'Webcam & prize review',
+    body,
     'Enable Camera 📷',
-    'Play Without Camera (will be flagged)',
+    'Continue without camera',
   );
   if (confirmed) {
     S.video = new VideoMonitor(S.game.id);
@@ -675,6 +825,72 @@ async function loadStats() {
   } catch(e) { /* ignore */ }
 }
 
+function lobbyCardActions(g) {
+  const uid = S.user?.id;
+  const imWhite = uid === g.white_player_id;
+  const imBlack = g.black_player_id != null && uid === g.black_player_id;
+  const imPlayer = imWhite || imBlack;
+
+  if (g.status === 'waiting') {
+    if (imWhite && !g.is_vs_cpu) {
+      return `
+        <button type="button" class="btn btn-primary btn-block" onclick="resumeGame(${g.id})">Open table ♟</button>
+        <button type="button" class="btn btn-ghost btn-block" style="margin-top:6px" onclick="cancelWaitingGame(${g.id})">Cancel lobby 🗑️</button>`;
+    }
+    if (!imWhite && !g.is_vs_cpu) {
+      return `<button type="button" class="btn btn-primary btn-block" onclick="joinGame(${g.id})">Join Game ♟</button>`;
+    }
+    return '<span style="font-size:13px;color:#888">—</span>';
+  }
+  if (g.status === 'active') {
+    if (imPlayer) {
+      return `<button type="button" class="btn btn-primary btn-block" onclick="resumeGame(${g.id})">Resume game ♟</button>`;
+    }
+    return `<button type="button" class="btn btn-secondary btn-block" onclick="watchGame(${g.id})">Watch 👀</button>`;
+  }
+  return `<button type="button" class="btn btn-ghost btn-block" onclick="viewGame(${g.id})">View ♟</button>`;
+}
+
+async function resumeGame(gameId) {
+  try {
+    const game = await API.getGame(gameId);
+    if (!S.user) {
+      Toast.err('Please log in again.');
+      return;
+    }
+    const myColor = S.user.id === game.white_player_id ? 'white' : 'black';
+    if (S.user.id !== game.white_player_id && S.user.id !== game.black_player_id) {
+      Toast.warn('You are not a player in this game — opening as spectator.');
+      await watchGame(gameId);
+      return;
+    }
+    enterGame(game, myColor);
+  } catch (e) {
+    Toast.err(e.message || 'Could not open game');
+  }
+}
+
+async function cancelWaitingGame(gameId) {
+  const ok = await Modal.show(
+    '🗑️',
+    'Cancel this table?',
+    'Your locked bet will be released and you can start a new game.',
+    'Yes, cancel',
+    'Keep waiting',
+  );
+  if (!ok) return;
+  try {
+    await API.cancelGame(gameId);
+    Toast.ok('Lobby cancelled. Your stake is unlocked.');
+    await loadLobby();
+    if (S.game && S.game.id === gameId) {
+      App.goLobby();
+    }
+  } catch (e) {
+    Toast.err(e.message || 'Could not cancel');
+  }
+}
+
 async function loadGames(status = 'waiting') {
   const grid = document.getElementById('games-grid');
   grid.innerHTML = '<div class="empty-state"><div class="spinner"></div></div>';
@@ -692,18 +908,13 @@ async function loadGames(status = 'waiting') {
       card.innerHTML = `
         <div class="gc-top">
           <span class="gc-status ${statusClass}">${g.status}</span>
-          <span style="font-size:13px;color:#888">#${g.id}</span>
+          <span style="font-size:13px;color:#888">#${g.id}${g.is_vs_cpu ? ' · 🤖 CPU' : ''}</span>
         </div>
         <div class="gc-player">♟ ${g.white_username}</div>
         <div class="gc-bet-label">Prize Pool</div>
         <div class="gc-bet">₹${(g.bet_amount * 2).toFixed(2)}</div>
         <div class="gc-action">
-          ${g.status === 'waiting' && g.white_player_id !== S.user?.id
-            ? `<button class="btn btn-primary btn-block" onclick="joinGame(${g.id})">Join Game ♟</button>`
-            : g.status === 'active'
-            ? `<button class="btn btn-secondary btn-block" onclick="watchGame(${g.id})">Watch 👀</button>`
-            : `<button class="btn btn-ghost btn-block" onclick="viewGame(${g.id})">View ♟</button>`
-          }
+          ${lobbyCardActions(g)}
         </div>`;
       grid.appendChild(card);
     }
@@ -738,12 +949,37 @@ async function createGame() {
   document.getElementById('modal-icon').textContent  = '♟';
   document.getElementById('modal-title').textContent = 'Create a Game';
   document.getElementById('modal-body').innerHTML = `
-    <p style="margin-bottom:14px;color:#7578A8">Choose your bet amount. The winner gets double! Available: <strong>₹${available.toFixed(2)}</strong></p>
-    <div style="display:flex;flex-wrap:wrap;gap:8px;justify-content:center;margin-bottom:16px">
-      ${amounts.map(a => `<button class="quick-chip" onclick="document.getElementById('bet-input').value=${a};document.querySelectorAll('.quick-chip').forEach(c=>c.classList.remove('active'));this.classList.add('active')" style="min-width:70px">₹${a}</button>`).join('')}
+    <p style="margin-bottom:12px;color:#7578A8">You always play <strong>White</strong>. Prize pool is 2× your stake. Available: <strong>₹${available.toFixed(2)}</strong></p>
+    <div style="margin-bottom:14px">
+      <div style="font-size:12px;font-weight:800;color:#5349D1;margin-bottom:6px">OPPONENT</div>
+      <label style="display:flex;gap:8px;align-items:center;margin-bottom:6px;cursor:pointer">
+        <input type="radio" name="create-opp" value="human" checked />
+        <span>Wait for a friend (share invite)</span>
+      </label>
+      <label style="display:flex;gap:8px;align-items:center;cursor:pointer">
+        <input type="radio" name="create-opp" value="cpu" />
+        <span>Play computer now (no waiting)</span>
+      </label>
     </div>
-    <input class="field-input" type="number" id="bet-input" placeholder="Or type amount (₹1-₹${Math.min(100,available).toFixed(0)})" min="1" max="${Math.min(100,available)}" step="1" style="margin-bottom:8px" />
-    <small style="color:#7578A8;display:block;text-align:center">💡 Max ₹100 per bet</small>`;
+    <div style="margin-bottom:12px">
+      <label class="field-label" style="display:block;margin-bottom:6px">⏱ Clock</label>
+      <select class="field-input" id="clock-preset" style="width:100%">
+        <option value="180|2">Blitz 3 min + 2 sec / move</option>
+        <option value="300|3">Blitz 5 min + 3 sec / move</option>
+        <option value="600|5" selected>Rapid 10 min + 5 sec / move</option>
+        <option value="900|10">Rapid 15 min + 10 sec / move</option>
+        <option value="1800|0">30 min + 0 (no increment)</option>
+      </select>
+    </div>
+    <div style="display:flex;flex-wrap:wrap;gap:8px;justify-content:center;margin-bottom:12px">
+      ${amounts.map(a => `<button type="button" class="quick-chip" onclick="document.getElementById('bet-input').value=${a};document.querySelectorAll('#modal-body .quick-chip').forEach(c=>c.classList.remove('active'));this.classList.add('active')" style="min-width:70px">₹${a}</button>`).join('')}
+    </div>
+    <input class="field-input" type="number" id="bet-input" placeholder="Bet ₹1–₹${Math.min(100,available).toFixed(0)}" min="1" max="${Math.min(100,available)}" step="1" style="margin-bottom:10px" />
+    <label style="display:flex;gap:10px;align-items:flex-start;cursor:pointer;font-size:13px;line-height:1.35;color:#333">
+      <input type="checkbox" id="prize-terms-ack" style="margin-top:3px" />
+      <span>I understand: for <strong>head-to-head games</strong>, <strong>both players</strong> need usable webcam footage on file before a win can be verified and paid; for <strong>vs computer</strong>, only your recording matters. If video is off, unclear, or missing, prize money may not be credited.</span>
+    </label>
+    <small style="color:#7578A8;display:block;text-align:center;margin-top:8px">Max ₹100 per bet · <a href="#" onclick="return false" style="pointer-events:none">Terms required to create a cash table</a></small>`;
   document.getElementById('modal-cancel').textContent = 'Cancel';
   document.getElementById('modal-ok').textContent     = 'Create Game! ♟';
   overlayEl.classList.add('open');
@@ -754,9 +990,28 @@ async function createGame() {
     if (!ok) return;
     const amt = parseFloat(document.getElementById('bet-input').value);
     if (!amt || amt < 1) { Toast.err('Enter a valid bet amount!'); return; }
+    const ack = document.getElementById('prize-terms-ack')?.checked;
+    if (!ack) {
+      Toast.err('Please confirm the prize & webcam eligibility notice to play for money.');
+      return;
+    }
+    const opp = document.querySelector('input[name="create-opp"]:checked')?.value || 'human';
+    const preset = (document.getElementById('clock-preset')?.value || '600|5').split('|');
+    const clock_initial_sec = parseInt(preset[0], 10) || 600;
+    const clock_increment_sec = parseInt(preset[1], 10) || 0;
     try {
-      const game = await API.createGame(amt);
-      Toast.ok(`Game created! Waiting for opponent… (Game #${game.id})`);
+      const game = await API.createGame({
+        bet_amount: amt,
+        vs_cpu: opp === 'cpu',
+        video_prize_terms_ack: true,
+        clock_initial_sec,
+        clock_increment_sec,
+      });
+      Toast.ok(
+        opp === 'cpu'
+          ? `Game #${game.id} — White vs computer!`
+          : `Game #${game.id} — share the invite with a friend.`,
+      );
       enterGame(game, 'white');
     } catch(e) {
       Toast.err(`Couldn't create game: ${e.message}`);
@@ -789,6 +1044,15 @@ async function watchGame(gameId) {
     renderMoveList();
     updatePrize();
     document.getElementById('turn-text').textContent = '👀 Watching this game';
+    document.getElementById('opp-name').textContent = game.is_vs_cpu ? 'Computer' : 'Player';
+    document.getElementById('my-name').textContent = 'Spectator';
+    if (game.status === 'active') {
+      syncClockFromGame();
+      startClockTicker();
+      connectWS(game.id);
+    } else {
+      stopClockTicker();
+    }
   } catch(e) {
     Toast.err(e.message);
   }
@@ -817,12 +1081,27 @@ async function enterGame(game, myColor) {
 
   if (game.status === 'active') {
     const oppId = myColor === 'white' ? game.black_player_id : game.white_player_id;
-    if (oppId) {
+    if (game.is_vs_cpu && myColor === 'white') {
+      document.getElementById('opp-name').textContent = 'Computer';
+    } else if (oppId) {
       try {
         const opp = await API.getUser(oppId);
         document.getElementById('opp-name').textContent = opp.username;
       } catch(e) { /* ignore */ }
     }
+  } else {
+    document.getElementById('opp-name').textContent = 'Waiting for opponent…';
+  }
+
+  if (game.status === 'active') {
+    syncClockFromGame();
+    startClockTicker();
+  } else {
+    stopClockTicker();
+    const wEl = document.getElementById('clock-white-val');
+    const bEl = document.getElementById('clock-black-val');
+    if (wEl) wEl.textContent = '—';
+    if (bEl) bEl.textContent = '—';
   }
 
   // WebSocket
@@ -1019,6 +1298,7 @@ function afterLogin(token, user) {
 
 function logout() {
   S.token = S.user = S.game = S.wallet = null;
+  stopClockTicker();
   if (S.ws)    { S.ws.close(); S.ws = null; }
   if (S.video) { S.video.stop(); S.video = null; }
   localStorage.removeItem('cw_token');
@@ -1065,6 +1345,7 @@ function buildPreviewBoard() {
 const App = {
   goLobby() {
     document.getElementById('result-overlay').classList.remove('open');
+    stopClockTicker();
     if (S.ws) { S.ws.close(); S.ws = null; }
     if (S.video) { S.video.stop(); S.video = null; }
     S.game = null;
@@ -1077,6 +1358,8 @@ window.showView = showView;
 window.joinGame = joinGame;
 window.watchGame = watchGame;
 window.viewGame = viewGame;
+window.resumeGame = resumeGame;
+window.cancelWaitingGame = cancelWaitingGame;
 
 // ════════════════════════════════════════════════════════════════════════════
 //  Event Listeners
@@ -1100,7 +1383,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         document.getElementById('reg-username').value.trim(),
         document.getElementById('reg-password').value,
       );
-      afterLogin(data.access_token, user);
+      afterLogin(data.access_token, data.user);
       Toast.ok('Welcome to ChessWager! 🎉');
     } catch(e) {
       Toast.err(e.message);
@@ -1119,7 +1402,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         document.getElementById('login-password').value,
       );
       afterLogin(data.access_token, data.user);
-      Toast.ok(`Welcome back, ${user.username}! ♟`);
+      Toast.ok(`Welcome back, ${data.user.username}! ♟`);
     } catch(e) {
       Toast.err(e.message);
     } finally {
@@ -1171,20 +1454,26 @@ document.addEventListener('DOMContentLoaded', async () => {
   // ── Resign ──
   document.getElementById('resign-btn').addEventListener('click', async () => {
     if (!S.game || S.game.status !== 'active') return;
-    const ok = await Modal.show('🏳️', 'Resign the Game?',
-      'Are you sure? Your opponent will win and receive the prize money.',
+    const bet = Number(S.game.bet_amount) || 0;
+    const feeNote = bet > 0
+      ? ` Your locked stake (₹${bet.toFixed(2)}) is treated as forfeited on resignation — you will not get it back, and you may lose eligibility for winnings or participation fees for this table.`
+      : ' Your opponent will be awarded the result.';
+    const ok = await Modal.show('🏳️', 'Resign this game?',
+      `Are you sure? Your opponent wins the match.${feeNote}`,
       'Yes, I resign', 'Keep playing');
     if (!ok) return;
 
-    if (S.ws && S.ws.readyState === WebSocket.OPEN) {
-      S.ws.send(JSON.stringify({ type: 'resign' }));
-    } else {
-      try {
-        await API.resign(S.game.id);
-        showResult(S.myColor === 'white' ? 'black' : 'white', 'resignation');
-      } catch(e) {
-        Toast.err(e.message);
+    try {
+      if (S.ws) {
+        try { S.ws.close(); } catch (e) { /* ignore */ }
+        S.ws = null;
       }
+      await API.resign(S.game.id);
+      await refreshGame();
+      showResult(S.myColor === 'white' ? 'black' : 'white', 'resignation');
+    } catch (e) {
+      Toast.err(e.message || 'Could not resign');
+      if (S.game && S.game.status === 'active' && S.token) connectWS(S.game.id);
     }
   });
 

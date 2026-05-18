@@ -14,6 +14,7 @@ A multiplayer chess platform where players can create accounts, play real-time c
 | Real-time play | WebSocket endpoint for live move broadcasting |
 | REST fallback | Full REST API for moves (no WebSocket required) |
 | Anti-cheat | Server-side validation, timing analysis, illegal-move banning |
+| Video & payouts | PvP: both players need usable recordings before admin can release winnings; vs CPU: human only |
 
 ---
 
@@ -136,6 +137,13 @@ Connect to `ws://localhost:8000/games/ws/{game_id}?token=<JWT>`
 
 ---
 
+## Payout & video verification
+
+- Winnings may sit in **pending payout** until an admin reviews and approves release.
+- **Multiplayer (human vs human):** the server requires **usable webcam chunks from both players** (each ≥ 1 KB on disk) before `/admin/payouts/{id}/approve` will succeed.
+- **Vs CPU:** only the **human** player must have usable chunks.
+- **Video Evidence** in the admin UI: one row per **session** (same player + game). **Clean** only means nothing in that session is marked **flagged**. **Play** streams WebM segments in order (or open files under `videos/<game_id>/<user_id>/`). The API is `GET /admin/videos` plus `GET /admin/videos/{chunk_id}/file?admin_key=...` per file.
+
 ## Project Structure
 
 ```
@@ -147,6 +155,7 @@ D:\chess-api\
 ├── schemas.py           # Pydantic request/response models
 ├── auth.py              # JWT creation, verification, dependencies
 ├── anticheat.py         # Anti-cheat detection engine
+├── video_evidence.py    # Payout rules: both sides must have video (PvP)
 ├── websocket_manager.py # WebSocket connection manager
 ├── requirements.txt
 ├── .env.example

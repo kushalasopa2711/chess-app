@@ -93,6 +93,16 @@ class TransactionOut(BaseModel):
 
 class GameCreate(BaseModel):
     bet_amount: float = Field(..., gt=0, le=100, description="Bet in rupees (max ₹100)")
+    vs_cpu: bool = Field(False, description="Play against computer (black). No human join.")
+    video_prize_terms_ack: bool = Field(
+        False,
+        description=(
+            "Required for cash games. Acknowledges that vs-player games need both players' usable "
+            "video for payout verification (vs CPU: human only), and unclear/missing video may block payout."
+        ),
+    )
+    clock_initial_sec: int = Field(600, ge=180, le=3600, description="Starting clock per side (seconds).")
+    clock_increment_sec: int = Field(5, ge=0, le=60, description="Seconds added after each move.")
 
     @field_validator("bet_amount")
     @classmethod
@@ -128,6 +138,12 @@ class GameOut(BaseModel):
     bet_amount: float
     winner_id: Optional[int]
     result: Optional[str]
+    is_vs_cpu: bool = False
+    video_prize_terms_ack: bool = False
+    clock_initial_sec: int = 600
+    clock_increment_sec: int = 5
+    white_time_ms: int = 600_000
+    black_time_ms: int = 600_000
     created_at: datetime
     started_at: Optional[datetime]
     ended_at: Optional[datetime]
@@ -142,9 +158,11 @@ class GameDetail(GameOut):
 class GameListItem(BaseModel):
     id: int
     white_player_id: int
+    black_player_id: Optional[int] = None
     white_username: str
     status: str
     bet_amount: float
+    is_vs_cpu: bool = False
     created_at: datetime
 
     model_config = {"from_attributes": True}

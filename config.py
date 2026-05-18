@@ -33,5 +33,9 @@ ANTICHEAT_FAST_MOVE_THRESHOLD_MS: int = 500
 ANTICHEAT_FAST_MOVE_STREAK: int       = 5
 ANTICHEAT_ACCURACY_THRESHOLD: float   = 0.95
 
+# ── CPU opponent (system user) ─────────────────────────────────────────────
+CPU_BOT_USERNAME: str = os.getenv("CPU_BOT_USERNAME", "ChessWagerCPU")
+CPU_BOT_EMAIL: str = os.getenv("CPU_BOT_EMAIL", "cpu@chesswager.internal")
+
 # ── Admin ─────────────────────────────────────────────────────────────────────
 ADMIN_SECRET: str              = os.getenv("ADMIN_SECRET", "admin-secret-change-me")

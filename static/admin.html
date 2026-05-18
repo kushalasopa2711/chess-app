@@ -194,6 +194,30 @@
   .popup-cancel { padding: 12px 20px; border: 1px solid #2D3555; border-radius: 10px; cursor: pointer;
                background: transparent; font-family: 'Nunito', sans-serif; font-size: 15px; font-weight: 700; color: #7B8CB8; }
 
+  /* ── Video evidence preview ── */
+  .video-preview-box {
+    background: #1E2235; border: 1px solid #2D3555; border-radius: 16px;
+    padding: 16px; width: min(92vw, 920px); max-height: 92vh;
+    box-shadow: 0 24px 60px rgba(0,0,0,.55);
+    transform: scale(.94); transition: transform .2s;
+  }
+  .popup-overlay.open .video-preview-box { transform: scale(1); }
+  .video-preview-head {
+    display: flex; align-items: flex-start; justify-content: space-between; gap: 12px;
+    margin-bottom: 12px;
+  }
+  .video-preview-title { font-size: 17px; font-weight: 900; color: #fff; line-height: 1.3; }
+  .video-preview-meta { font-size: 12px; color: #7B8CB8; margin-top: 4px; }
+  .video-preview-close {
+    flex-shrink: 0; padding: 8px 14px; border-radius: 8px; cursor: pointer;
+    border: 1px solid #2D3555; background: #252A40; color: #E2E8F0;
+    font-family: 'Nunito', sans-serif; font-size: 13px; font-weight: 800;
+  }
+  .video-preview-close:hover { filter: brightness(1.1); }
+  #video-preview-el {
+    width: 100%; max-height: calc(92vh - 120px); background: #000; border-radius: 10px;
+  }
+
   /* ── Pagination ── */
   .pagination { display: flex; align-items: center; justify-content: center; gap: 10px; margin-top: 16px; }
   .pg-btn {
@@ -412,16 +436,19 @@
         <div>
           <div class="sec-title">📹 Video Evidence</div>
           <div class="sec-sub" id="videos-count">Loading…</div>
+          <div class="sec-sub" style="margin-top:10px;max-width:720px;line-height:1.55">
+            <strong>Clean</strong> is not an auto quality score — it only means no segment in this session is manually flagged yet. Recordings are stored under <code>videos/&lt;game_id&gt;/&lt;user_id&gt;/</code>. Each row is one <strong>session</strong> (player + game); older data may list multiple segments — use <strong>▶ Play</strong> to watch them in order.
+          </div>
         </div>
         <div style="display:flex;gap:8px">
           <button class="act-btn act-ban" onclick="loadVideos(true)">🚩 Flagged Only</button>
-          <button class="act-btn act-view" onclick="loadVideos(false)">📋 All Chunks</button>
+          <button class="act-btn act-view" onclick="loadVideos(false)">📋 All sessions</button>
         </div>
       </div>
       <div class="table-wrap">
         <table>
           <thead>
-            <tr><th>ID</th><th>User</th><th>Game</th><th>Chunk</th><th>Size</th><th>Bet</th><th>Flagged</th><th>Recorded At</th><th>Actions</th></tr>
+            <tr><th>Chunks</th><th>User</th><th>Game</th><th>Parts</th><th>Total size</th><th>Bet</th><th>Status</th><th>Ended</th><th>Actions</th></tr>
           </thead>
           <tbody id="videos-body"><tr><td colspan="9" class="empty">Loading…</td></tr></tbody>
         </table>
@@ -456,7 +483,7 @@
       <div class="sec-header">
         <div>
           <div class="sec-title">💸 Pending Payouts (24h Video Review)</div>
-          <div class="sec-sub">Review webcam video before releasing winnings</div>
+          <div class="sec-sub">Multiplayer: <strong>both players</strong> must have usable webcam chunks on file before a payout can be released (enforced on Approve). Vs CPU: only the human player.</div>
         </div>
         <div style="display:flex;gap:8px">
           <button class="act-btn act-ban"  onclick="loadPayouts('pending')">⏳ Pending</button>
@@ -467,9 +494,9 @@
       <div class="table-wrap">
         <table>
           <thead>
-            <tr><th>ID</th><th>Winner</th><th>Game</th><th>Gross</th><th>Fee (10%)</th><th>Net Payout</th><th>Auto-Release</th><th>Status</th><th>Actions</th></tr>
+            <tr><th>ID</th><th>Winner</th><th>Game</th><th>Video</th><th>Gross</th><th>Fee (10%)</th><th>Net Payout</th><th>Auto-Release</th><th>Status</th><th>Actions</th></tr>
           </thead>
-          <tbody id="payouts-body"><tr><td colspan="9" class="empty">Loading…</td></tr></tbody>
+          <tbody id="payouts-body"><tr><td colspan="10" class="empty">Loading…</td></tr></tbody>
         </table>
       </div>
     </section>
@@ -520,6 +547,19 @@
 </div><!-- #app -->
 
 <!-- ── Mini popup ── -->
+<div class="popup-overlay" id="video-preview-overlay" onclick="if(event.target===this)closeVideoPreview()">
+  <div class="video-preview-box" onclick="event.stopPropagation()">
+    <div class="video-preview-head">
+      <div>
+        <div class="video-preview-title" id="video-preview-title">Evidence</div>
+        <div class="video-preview-meta" id="video-preview-meta"></div>
+      </div>
+      <button type="button" class="video-preview-close" onclick="closeVideoPreview()">Close ✕</button>
+    </div>
+    <video id="video-preview-el" controls playsinline></video>
+  </div>
+</div>
+
 <div class="popup-overlay" id="popup-overlay">
   <div class="popup-box">
     <div class="popup-title" id="popup-title">Action</div>
@@ -670,8 +710,8 @@ async function loadOverview() {
       </div>
       <div class="stat-card">
         <div class="stat-icon">📹</div>
-        <div class="stat-val">${d.anticheat.video_chunks}</div>
-        <div class="stat-label">Video Chunks</div>
+        <div class="stat-val">${d.anticheat.video_sessions ?? '—'}</div>
+        <div class="stat-label">Video sessions <span style="opacity:.85;font-weight:600">(${d.anticheat.video_chunks} files)</span></div>
       </div>`;
 
     document.getElementById('money-bar').innerHTML = `
@@ -847,36 +887,102 @@ async function loadFlags(severity = '') {
   }
 }
 
-// ── Videos ────────────────────────────────────────────────────────────────
+// ── Videos (grouped sessions) ───────────────────────────────────────────────
+let _playlistIds = [];
+let _plIdx = 0;
+let _plGameId = null;
+let _plUser = '';
+
+function playAdminSession(chunkIds, username, gameId) {
+  if (!chunkIds || !chunkIds.length) return;
+  _playlistIds = chunkIds.slice();
+  _plIdx = 0;
+  _plGameId = gameId;
+  _plUser = username || 'User';
+  const v = document.getElementById('video-preview-el');
+  const metaText = () =>
+    `Game #${_plGameId} · clip ${_plIdx + 1} of ${_playlistIds.length} · ${_plUser}`;
+  v.onended = () => {
+    _plIdx++;
+    if (_plIdx >= _playlistIds.length) {
+      v.onended = null;
+      return;
+    }
+    v.src = `/admin/videos/${_playlistIds[_plIdx]}/file?admin_key=${encodeURIComponent(ADMIN_KEY)}`;
+    document.getElementById('video-preview-meta').textContent = metaText();
+    v.play().catch(() => {});
+  };
+  document.getElementById('video-preview-title').textContent =
+    _playlistIds.length > 1 ? `Recording session (${_playlistIds.length} clips)` : 'Recording';
+  document.getElementById('video-preview-meta').textContent = metaText();
+  v.src = `/admin/videos/${_playlistIds[0]}/file?admin_key=${encodeURIComponent(ADMIN_KEY)}`;
+  document.getElementById('video-preview-overlay').classList.add('open');
+  v.play().catch(() => {});
+}
+
+function playAdminVideo(chunkId, username, gameId, chunkNum) {
+  playAdminSession([chunkId], username, gameId);
+  document.getElementById('video-preview-meta').textContent =
+    `Game #${gameId} · part ${chunkNum != null ? chunkNum : '—'}`;
+}
+
+function closeVideoPreview() {
+  const v = document.getElementById('video-preview-el');
+  v.onended = null;
+  _playlistIds = [];
+  v.pause();
+  v.removeAttribute('src');
+  v.load();
+  document.getElementById('video-preview-overlay').classList.remove('open');
+}
+
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && document.getElementById('video-preview-overlay').classList.contains('open')) {
+    closeVideoPreview();
+  }
+});
+
 async function loadVideos(flaggedOnly = false) {
   try {
     const q = `/admin/videos?admin_key=${ADMIN_KEY}&per_page=50&flagged_only=${flaggedOnly}`;
     const d = await get(q);
-    document.getElementById('videos-count').textContent = `${d.total} total chunks`;
+    const chunks = d.total_chunks != null ? d.total_chunks : d.total;
+    document.getElementById('videos-count').textContent =
+      `${d.total} recording session(s) — ${chunks} file(s) on disk — ▶ Play: in-order preview · ↗: new tab`;
 
     const tbody = document.getElementById('videos-body');
-    if (!d.videos.length) {
-      tbody.innerHTML = '<tr><td colspan="9" class="empty">No video chunks recorded yet</td></tr>';
+    const sessions = d.sessions || [];
+    if (!sessions.length) {
+      tbody.innerHTML = '<tr><td colspan="9" class="empty">No video recordings yet</td></tr>';
     } else {
-      tbody.innerHTML = d.videos.map(v => `
-        <tr>
-          <td style="color:#7B8CB8;font-size:12px">#${v.id}</td>
-          <td><strong style="color:#fff">${esc(v.username)}</strong></td>
-          <td><span class="badge badge-purple">Game #${v.game_id}</span></td>
-          <td style="color:#A0A8CC">${v.chunk_number}</td>
-          <td style="color:#7B8CB8">${v.size_kb} KB</td>
-          <td style="color:#43C59E">₹${v.bet_amount.toFixed(2)}</td>
-          <td>${v.flagged
-            ? `<span class="badge badge-red">🚩 ${esc(v.flag_reason||'Flagged')}</span>`
-            : `<span class="badge badge-green">Clean</span>`}
+      tbody.innerHTML = sessions.map(s => {
+        const idsJson = JSON.stringify(s.chunk_ids || []);
+        const chunksBadge = (s.chunk_ids && s.chunk_ids.length)
+          ? s.chunk_ids.map(id => `<span style="color:#7B8CB8;font-size:11px">#${id}</span>`).join(' ')
+          : '—';
+        const firstId = s.primary_chunk_id || (s.chunk_ids && s.chunk_ids[0]) || '';
+        return `<tr>
+          <td style="max-width:120px;line-height:1.35">${chunksBadge}</td>
+          <td><strong style="color:#fff">${esc(s.username)}</strong></td>
+          <td><span class="badge badge-purple">Game #${s.game_id}</span></td>
+          <td style="color:#A0A8CC">${s.segments}</td>
+          <td style="color:#7B8CB8">${s.total_size_kb} KB</td>
+          <td style="color:#43C59E">₹${Number(s.bet_amount).toFixed(2)}</td>
+          <td>${s.flagged
+            ? `<span class="badge badge-red">🚩 Flagged: ${esc(s.flag_reason||'—')}</span>`
+            : `<span class="badge badge-green">Clean</span> <span style="font-size:11px;color:#7B8CB8">(not flagged)</span>`}
           </td>
-          <td style="font-size:12px;color:#7B8CB8">${fmtDate(v.created_at)}</td>
+          <td style="font-size:12px;color:#7B8CB8">${fmtDate(s.session_end)}</td>
           <td>
-            <div style="display:flex;gap:5px">
-              <button class="act-btn act-ban" onclick="penaliseFromVideo(${v.user_id},'${esc(v.username)}',${v.game_id})">Apply Penalty</button>
+            <div style="display:flex;gap:5px;flex-wrap:wrap;align-items:center">
+              <button type="button" class="act-btn act-view" onclick='playAdminSession(${idsJson}, ${JSON.stringify(s.username)}, ${s.game_id})'>▶ Play</button>
+              <a class="act-btn act-view" href="/admin/videos/${firstId}/file?admin_key=${encodeURIComponent(ADMIN_KEY)}" target="_blank" rel="noopener" title="Open latest segment in new tab">↗</a>
+              <button class="act-btn act-ban" onclick="penaliseFromVideo(${s.user_id},${JSON.stringify(s.username)},${s.game_id})">Penalty</button>
             </div>
+            <div style="font-size:10px;color:#4A5280;margin-top:6px;word-break:break-all" title="Paths on server">${esc((s.file_paths||[]).join(' · '))}</div>
           </td>
-        </tr>`).join('');
+        </tr>`;
+      }).join('');
     }
   } catch(e) {
     toast('Failed to load videos: ' + e.message, 'err');
@@ -1087,18 +1193,22 @@ async function loadPayouts(status = 'pending') {
     const d = await get(`/admin/payouts?admin_key=${ADMIN_KEY}${status ? '&status=' + status : ''}`);
     const tbody = document.getElementById('payouts-body');
     if (!d.payouts.length) {
-      tbody.innerHTML = '<tr><td colspan="9" class="empty">No payouts in this category</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="10" class="empty">No payouts in this category</td></tr>';
       return;
     }
     tbody.innerHTML = d.payouts.map(p => {
       const autoRelease = p.auto_release_at ? new Date(p.auto_release_at) : null;
       const now = new Date();
       const hoursLeft = autoRelease ? Math.max(0, ((autoRelease - now) / 3600000)).toFixed(1) : '—';
+      const vOk = p.video_ok_for_payout === true;
+      const vBadge = `<span class="badge ${vOk ? 'badge-green' : 'badge-red'}" title="${esc(p.video_note || '')}">${vOk ? 'OK' : 'Incomplete'}</span>`;
+      const mode = p.is_vs_cpu ? '<span class="badge badge-purple">CPU</span>' : '';
       return `
         <tr>
           <td style="color:#7B8CB8;font-size:12px">#${p.id}</td>
           <td><strong style="color:#fff">${esc(p.username)}</strong></td>
-          <td><span class="badge badge-purple">Game #${p.game_id}</span></td>
+          <td><span class="badge badge-purple">Game #${p.game_id}</span> ${mode}</td>
+          <td style="max-width:140px">${vBadge}<div style="font-size:10px;color:#7B8CB8;margin-top:4px;line-height:1.3">${esc((p.video_note || '').slice(0, 80))}${(p.video_note || '').length > 80 ? '…' : ''}</div></td>
           <td style="color:#A0A8CC">₹${p.gross_amount.toFixed(2)}</td>
           <td style="color:#FF5252">₹${p.platform_fee.toFixed(2)}</td>
           <td style="color:#43C59E;font-weight:900">₹${p.net_amount.toFixed(2)}</td>
@@ -1116,7 +1226,7 @@ async function loadPayouts(status = 'pending') {
 }
 
 async function releasePayout(id, uname, net) {
-  const ok = confirm(`✅ Release ₹${net} to ${uname}?\nOnly do this after reviewing their video footage and confirming no cheating.`);
+  const ok = confirm(`✅ Release ₹${net} to ${uname}?\nOnly after reviewing footage. Note: head-to-head games cannot be released until BOTH players have usable video chunks on the server (vs CPU: human only).`);
   if (!ok) return;
   try {
     const r = await post(`/admin/payouts/${id}/approve?admin_key=${ADMIN_KEY}`);

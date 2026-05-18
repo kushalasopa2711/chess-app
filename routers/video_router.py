@@ -1,7 +1,8 @@
 """
 Video monitoring router.
 
-During any bet game every player must enable their webcam.
+During bet games, players should upload webcam chunks. For head-to-head matches, both
+sides must have usable recordings on file before admin can approve a payout (vs CPU: human only).
 The browser uploads 30-second WebM chunks here, the server stores them,
 and an admin (or automated system) can later review and penalise cheaters.
 
@@ -56,8 +57,8 @@ async def upload_chunk(
     db: AsyncSession = Depends(get_db),
 ):
     """
-    Upload a 30-second webcam chunk for a game.
-    The browser should call this every 30 seconds while a bet game is active.
+    Upload one WebM file per recording run for a game (typically a single clip for
+    the whole session until stop). The server stores it as a numbered segment.
     """
     result = await db.execute(select(Game).where(Game.id == game_id))
     game = result.scalar_one_or_none()
