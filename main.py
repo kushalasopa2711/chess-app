@@ -75,7 +75,10 @@ async def serve_frontend():
 async def serve_admin():
     admin_page = STATIC_DIR / "admin.html"
     if admin_page.exists():
-        return FileResponse(str(admin_page))
+        return FileResponse(
+            str(admin_page),
+            headers={"Cache-Control": "no-cache, no-store, must-revalidate"},
+        )
     return {"message": "Admin page not found."}
 
 

@@ -155,6 +155,9 @@
     transition: filter .15s;
   }
   .act-btn:hover { filter: brightness(1.15); }
+  .user-actions { display: flex; flex-direction: column; gap: 6px; align-items: flex-start; max-width: 280px; }
+  .user-actions-row { display: flex; flex-wrap: wrap; gap: 5px; align-items: center; }
+  .act-btn.act-del { background: #5C2B29 !important; border: 1px solid #FF5252 !important; color: #FFCDD2 !important; font-weight: 700; }
   .act-add    { background: rgba(67,197,158,.2);  color: #43C59E; }
   .act-deduct { background: rgba(255,82,82,.2);   color: #FF5252; }
   .act-ban    { background: rgba(255,82,82,.18);  color: #FF5252; }
@@ -718,8 +721,9 @@ async function loadUsers(page = _page_users) {
     if (!d.users.length) {
       tbody.innerHTML = '<tr><td colspan="10" class="empty">No users found</td></tr>';
     } else {
-      tbody.innerHTML = d.users.map(u => `
-        <tr>
+      tbody.innerHTML = d.users.map(u => {
+        const jn = JSON.stringify(u.username);
+        return `<tr>
           <td style="color:#7B8CB8;font-size:12px">#${u.id}</td>
           <td><strong style="color:#fff">${esc(u.username)}</strong></td>
           <td style="font-size:13px;color:#A0A8CC">${esc(u.email)}</td>
@@ -736,17 +740,20 @@ async function loadUsers(page = _page_users) {
             : `<span class="badge badge-green">Active</span>`}
           </td>
           <td>
-            <div style="display:flex;gap:5px;flex-wrap:wrap">
-              <button class="act-btn act-add" onclick="addFunds(${u.id},'${esc(u.username)}')">+ Funds</button>
-              <button class="act-btn act-deduct" onclick="deductFunds(${u.id},'${esc(u.username)}')">- Funds</button>
-              ${u.is_banned
-                ? `<button class="act-btn act-unban" onclick="unbanUser(${u.id},'${esc(u.username)}')">Unban</button>`
-                : `<button class="act-btn act-ban" onclick="banUser(${u.id},'${esc(u.username)}')">Ban</button>`
-              }
-              <button class="act-btn" style="background:#5C2B29;border:1px solid #FF5252;color:#FFCDD2" onclick="deleteUser(${u.id},'${esc(u.username)}')">Delete</button>
+            <div class="user-actions">
+              <div class="user-actions-row">
+                <button type="button" class="act-btn act-add" onclick='addFunds(${u.id}, ${jn})'>+ Funds</button>
+                <button type="button" class="act-btn act-deduct" onclick='deductFunds(${u.id}, ${jn})'>- Funds</button>
+                ${u.is_banned
+                  ? `<button type="button" class="act-btn act-unban" onclick='unbanUser(${u.id}, ${jn})'>Unban</button>`
+                  : `<button type="button" class="act-btn act-ban" onclick='banUser(${u.id}, ${jn})'>Ban</button>`
+                }
+              </div>
+              <button type="button" class="act-btn act-del" onclick='deleteUser(${u.id}, ${jn})'>🗑 Remove account</button>
             </div>
           </td>
-        </tr>`).join('');
+        </tr>`;
+      }).join('');
     }
 
     // Pagination
