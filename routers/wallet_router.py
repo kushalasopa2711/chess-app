@@ -5,7 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from auth import get_active_unbanned_user
 from config import MAX_WALLET_BALANCE as MAX_INVESTMENT_RUPEES
 from database import get_db
-from models import Transaction, TransactionType, User, Wallet
+from models import Transaction, TransactionType, User, Wallet, WithdrawalRequest
 from schemas import DepositRequest, TransactionOut, WalletOut, WithdrawRequest
 
 router = APIRouter(prefix="/wallet", tags=["Wallet"])
@@ -87,12 +87,52 @@ async def withdraw(
         user_id=user.id,
         amount=payload.amount,
         type=TransactionType.WITHDRAWAL,
-        description=f"Withdrawal of ₹{payload.amount}",
+        description=(
+            f"Withdrawal ₹{payload.amount} → {payload.destination_upi} "
+            f"(expect UPI credit within ~24h)"
+        ),
     )
     db.add(tx)
+    await db.flush()
+    db.add(
+        WithdrawalRequest(
+            user_id=user.id,
+            amount=payload.amount,
+            destination_upi=payload.destination_upi,
+            transaction_id=tx.id,
+            status="pending",
+        )
+    )
     await db.commit()
     await db.refresh(wallet)
     return wallet
+
+
+@router.get("/my-withdrawals")
+async def my_withdrawals(
+    user: User = Depends(get_active_unbanned_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Withdrawal queue for this player (UPI payout requests)."""
+    result = await db.execute(
+        select(WithdrawalRequest)
+        .where(WithdrawalRequest.user_id == user.id)
+        .order_by(WithdrawalRequest.created_at.desc())
+        .limit(25)
+    )
+    rows = result.scalars().all()
+    return [
+        {
+            "id": w.id,
+            "amount": w.amount,
+            "destination_upi": w.destination_upi,
+            "status": w.status,
+            "created_at": w.created_at.isoformat(),
+            "reviewed_at": w.reviewed_at.isoformat() if w.reviewed_at else None,
+            "rejection_reason": w.rejection_reason,
+        }
+        for w in rows
+    ]
 
 
 @router.get("/transactions", response_model=list[TransactionOut])

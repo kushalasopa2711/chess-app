@@ -31,6 +31,7 @@ from database import get_db
 from models import (
     AntiCheatFlag, DepositRequest, Game, GameStatus, Move, Penalty,
     PendingPayout, Transaction, TransactionType, User, VideoChunk, Wallet,
+    WithdrawalRequest,
 )
 from video_evidence import payout_video_requirement_error, video_evidence_summary_for_admin
 
@@ -837,6 +838,109 @@ async def reject_payout(
         "banned": ban,
         "reason": reason,
     }
+
+
+# ── Player withdrawals (UPI / GPay) ───────────────────────────────────────────
+
+
+@router.get("/withdrawals")
+async def list_withdrawals(
+    admin_key: str = Query(""),
+    status: Optional[str] = Query(None, description="Filter: pending, completed, rejected"),
+    db: AsyncSession = Depends(get_db),
+):
+    """Queue of wallet withdrawals — player wallet already debited; pay destination_upi."""
+    _auth(admin_key)
+    q = (
+        select(WithdrawalRequest, User)
+        .join(User, User.id == WithdrawalRequest.user_id)
+        .order_by(WithdrawalRequest.created_at.desc())
+        .limit(200)
+    )
+    if status:
+        q = q.where(WithdrawalRequest.status == status)
+    rows = (await db.execute(q)).all()
+    return {
+        "withdrawals": [
+            {
+                "id": w.id,
+                "user_id": w.user_id,
+                "username": u.username,
+                "amount": w.amount,
+                "destination_upi": w.destination_upi,
+                "status": w.status,
+                "transaction_id": w.transaction_id,
+                "created_at": w.created_at.isoformat(),
+                "reviewed_at": w.reviewed_at.isoformat() if w.reviewed_at else None,
+                "rejection_reason": w.rejection_reason,
+            }
+            for w, u in rows
+        ]
+    }
+
+
+@router.post("/withdrawals/{withdrawal_id}/complete")
+async def complete_withdrawal(
+    withdrawal_id: int,
+    admin_key: str = Query(""),
+    db: AsyncSession = Depends(get_db),
+):
+    """Mark withdrawal as paid to the player's UPI (after you sent GPay/bank)."""
+    _auth(admin_key)
+    wr_r = await db.execute(
+        select(WithdrawalRequest).where(WithdrawalRequest.id == withdrawal_id)
+    )
+    wr = wr_r.scalar_one_or_none()
+    if not wr:
+        raise HTTPException(status_code=404, detail="Withdrawal not found.")
+    if wr.status != "pending":
+        raise HTTPException(status_code=400, detail=f"Already {wr.status}.")
+    wr.status = "completed"
+    wr.reviewed_at = datetime.utcnow()
+    wr.reviewed_by = "admin"
+    await db.commit()
+    return {"status": "completed", "id": wr.id}
+
+
+@router.post("/withdrawals/{withdrawal_id}/reject")
+async def reject_withdrawal(
+    withdrawal_id: int,
+    admin_key: str = Query(""),
+    reason: str = Query("Could not process withdrawal — refunded to wallet"),
+    db: AsyncSession = Depends(get_db),
+):
+    """Cancel a pending withdrawal and refund the amount to the player's wallet."""
+    _auth(admin_key)
+    wr_r = await db.execute(
+        select(WithdrawalRequest).where(WithdrawalRequest.id == withdrawal_id)
+    )
+    wr = wr_r.scalar_one_or_none()
+    if not wr:
+        raise HTTPException(status_code=404, detail="Withdrawal not found.")
+    if wr.status != "pending":
+        raise HTTPException(status_code=400, detail=f"Already {wr.status}.")
+
+    wallet_r = await db.execute(select(Wallet).where(Wallet.user_id == wr.user_id))
+    wallet = wallet_r.scalar_one_or_none()
+    if not wallet:
+        raise HTTPException(status_code=404, detail="Wallet not found.")
+
+    wallet.balance = round(wallet.balance + wr.amount, 2)
+    wr.status = "rejected"
+    wr.rejection_reason = reason
+    wr.reviewed_at = datetime.utcnow()
+    wr.reviewed_by = "admin"
+    db.add(wallet)
+    db.add(
+        Transaction(
+            user_id=wr.user_id,
+            amount=wr.amount,
+            type=TransactionType.REFUND,
+            description=f"Withdrawal #{wr.id} cancelled — {reason[:120]}",
+        )
+    )
+    await db.commit()
+    return {"status": "rejected", "refunded": wr.amount, "user_id": wr.user_id}
 
 
 # ── Platform revenue summary ───────────────────────────────────────────────────

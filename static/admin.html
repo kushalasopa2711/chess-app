@@ -504,6 +504,27 @@
           <tbody id="payouts-body"><tr><td colspan="10" class="empty">Loading…</td></tr></tbody>
         </table>
       </div>
+
+      <div class="sec-header" style="margin-top:28px;padding-top:24px;border-top:1px solid #2D3555">
+        <div>
+          <div class="sec-title">🏦 Wallet → UPI withdrawals</div>
+          <div class="sec-sub">Balance was already <strong>debited</strong> when the player submitted. Pay the <strong>UPI / GPay</strong> address below, then mark complete.</div>
+        </div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <button class="act-btn act-ban"  onclick="loadWithdrawals('pending')">⏳ Awaiting payout</button>
+          <button class="act-btn act-add"  onclick="loadWithdrawals('completed')">✅ Marked paid</button>
+          <button class="act-btn act-ban"  onclick="loadWithdrawals('rejected')">↩️ Refunded</button>
+          <button class="act-btn act-view" onclick="loadWithdrawals('all')">📋 All</button>
+        </div>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr><th>ID</th><th>User</th><th>Amount</th><th>UPI / GPay</th><th>Wallet txn</th><th>Status</th><th>Submitted</th><th>Actions</th></tr>
+          </thead>
+          <tbody id="withdrawals-body"><tr><td colspan="8" class="empty">Open this tab to load…</td></tr></tbody>
+        </table>
+      </div>
     </section>
 
     <!-- ── REVENUE ── -->
@@ -658,7 +679,7 @@ function goto(sec, btn) {
   if (sec === 'flags')     loadFlags('');
   if (sec === 'videos')    loadVideos(false);
   if (sec === 'deposits')  loadDeposits('pending');
-  if (sec === 'payouts')   loadPayouts('pending');
+  if (sec === 'payouts')   { loadPayouts('pending'); loadWithdrawals('pending'); }
   if (sec === 'revenue')   loadRevenue();
   if (sec === 'penalties') loadPenalties();
 }
@@ -1211,8 +1232,14 @@ async function loadDeposits(status = 'pending') {
 }
 
 function statusBadge(s) {
-  const map = { pending:'badge-yellow', approved:'badge-green', rejected:'badge-red' };
-  return `<span class="badge ${map[s]||'badge-gray'}">${s}</span>`;
+  const map = {
+    pending: 'badge-yellow',
+    approved: 'badge-green',
+    rejected: 'badge-red',
+    completed: 'badge-green',
+    penalized: 'badge-red',
+  };
+  return `<span class="badge ${map[s] || 'badge-gray'}">${s}</span>`;
 }
 
 async function approveDeposit(id, uname, amount) {
@@ -1232,6 +1259,60 @@ async function rejectDeposit(id) {
       await post(`/admin/deposits/${id}/reject?admin_key=${ADMIN_KEY}&reason=${encodeURIComponent(reason)}`);
       toast('Deposit rejected.', 'ok');
       closePopup(); loadDeposits('pending');
+    } catch(e) { toast(e.message, 'err'); }
+  });
+}
+
+// ── Wallet UPI withdrawals (under Payouts) ────────────────────────────────
+let _withdrawalFilter = 'pending';
+
+async function loadWithdrawals(status) {
+  if (status !== undefined && status !== null) _withdrawalFilter = status;
+  try {
+    const stParam = _withdrawalFilter === 'all' ? '' : `&status=${encodeURIComponent(_withdrawalFilter)}`;
+    const d = await get(`/admin/withdrawals?admin_key=${ADMIN_KEY}${stParam}`);
+    const tbody = document.getElementById('withdrawals-body');
+    if (!d.withdrawals.length) {
+      tbody.innerHTML = '<tr><td colspan="8" class="empty">No withdrawals in this category</td></tr>';
+      return;
+    }
+    tbody.innerHTML = d.withdrawals.map(w => `
+      <tr>
+        <td style="color:#7B8CB8;font-size:12px">#${w.id}</td>
+        <td><strong style="color:#fff">${esc(w.username)}</strong> <span style="color:#7B8CB8;font-size:11px">#${w.user_id}</span></td>
+        <td style="color:#43C59E;font-weight:800">₹${Number(w.amount).toFixed(2)}</td>
+        <td style="max-width:260px;word-break:break-all;font-weight:700;color:#FFD600">${esc(w.destination_upi)}</td>
+        <td style="font-size:11px;color:#7B8CB8">${w.transaction_id != null ? '#' + w.transaction_id : '—'}</td>
+        <td>${statusBadge(w.status)}</td>
+        <td style="font-size:12px;color:#A0A8CC">${fmtDate(w.created_at)}</td>
+        <td>${w.status === 'pending' ? `
+          <div style="display:flex;gap:4px;flex-wrap:wrap">
+            <button class="act-btn act-add" onclick="completeWithdrawal(${w.id})">✅ Mark paid</button>
+            <button class="act-btn act-ban" onclick="rejectWithdrawal(${w.id})">↩️ Reject & refund</button>
+          </div>` : '<span style="color:#4A5280">—</span>'}
+        </td>
+      </tr>`).join('');
+  } catch(e) { toast(e.message, 'err'); }
+}
+
+async function completeWithdrawal(id) {
+  const ok = confirm(`Mark withdrawal #${id} as paid?\nOnly after you sent GPay/UPI to the address in the table.`);
+  if (!ok) return;
+  try {
+    await post(`/admin/withdrawals/${id}/complete?admin_key=${ADMIN_KEY}`);
+    toast('Withdrawal marked paid.', 'ok');
+    loadWithdrawals();
+  } catch(e) { toast(e.message, 'err'); }
+}
+
+async function rejectWithdrawal(id) {
+  openPopup('↩️ Reject withdrawal', 'Reason (shown to player). Their wallet will be refunded.', false, 'Refund wallet', async () => {
+    const reason = document.getElementById('popup-note').value || 'Could not process withdrawal — refunded to wallet';
+    try {
+      await post(`/admin/withdrawals/${id}/reject?admin_key=${ADMIN_KEY}&reason=${encodeURIComponent(reason)}`);
+      toast('Withdrawal rejected; wallet refunded.', 'ok');
+      closePopup();
+      loadWithdrawals();
     } catch(e) { toast(e.message, 'err'); }
   });
 }

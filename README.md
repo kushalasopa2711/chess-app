@@ -79,7 +79,8 @@ Interactive API docs: **http://localhost:8000/docs**
 |---|---|---|
 | GET | `/wallet/balance` | Current balance & locked funds |
 | POST | `/wallet/deposit` | Add funds (max ₹100 total) |
-| POST | `/wallet/withdraw` | Withdraw available funds |
+| POST | `/wallet/withdraw` | Withdraw available funds (JSON: `amount`, `destination_upi`) |
+| GET | `/wallet/my-withdrawals` | Your UPI withdrawal queue |
 | GET | `/wallet/transactions` | Transaction history |
 
 ### Games
@@ -142,7 +143,7 @@ Connect to `ws://localhost:8000/games/ws/{game_id}?token=<JWT>`
 - Winnings may sit in **pending payout** until an admin reviews and approves release.
 - **Multiplayer (human vs human):** the server requires **usable webcam chunks from both players** (each ≥ 1 KB on disk) before `/admin/payouts/{id}/approve` will succeed.
 - **Vs CPU:** only the **human** player must have usable chunks.
-- **Video Evidence** in the admin UI: one row per **session** (same player + game). **Clean** only means nothing in that session is marked **flagged**. **Play** streams WebM segments in order (or open files under `videos/<game_id>/<user_id>/`). The API is `GET /admin/videos` plus `GET /admin/videos/{chunk_id}/file?admin_key=...` per file.
+- **UPI cash-out:** Players submit a **Google Pay / UPI ID** with each withdrawal. Ops see the destination in **Admin → Payouts → Wallet → UPI withdrawals** (`GET /admin/withdrawals`) and mark paid or reject (refund).
 
 ## Project Structure
 

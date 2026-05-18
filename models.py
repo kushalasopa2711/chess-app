@@ -210,3 +210,22 @@ class PendingPayout(Base):
     auto_release_at = Column(DateTime, nullable=True) # auto-approve after this time if no review
     created_at = Column(DateTime, default=datetime.utcnow)
     reviewed_at = Column(DateTime, nullable=True)
+
+
+class WithdrawalRequest(Base):
+    """
+    Player requested cash-out. Wallet is debited immediately; admin pays the UPI ID
+    and marks the request completed (or rejects and refunds).
+    """
+    __tablename__ = "withdrawal_requests"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    amount = Column(Float, nullable=False)
+    destination_upi = Column(String(100), nullable=False)
+    transaction_id = Column(Integer, ForeignKey("transactions.id"), nullable=True)
+    status = Column(String(20), default="pending")  # pending / completed / rejected
+    rejection_reason = Column(String(500), nullable=True)
+    reviewed_by = Column(String(100), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    reviewed_at = Column(DateTime, nullable=True)

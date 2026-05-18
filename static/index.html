@@ -273,10 +273,17 @@
           <span>🔒 In active games:</span>
           <strong id="w-locked">₹0.00</strong>
         </div>
+        <div class="balance-locked-row" style="margin-top:8px">
+          <span>🏦 You can withdraw:</span>
+          <strong id="w-withdrawable">₹0.00</strong>
+        </div>
         <div class="balance-track">
           <div class="balance-progress" id="w-progress" style="width:0%"></div>
         </div>
-        <div class="balance-max-label">Max wallet: ₹100 &nbsp;|&nbsp; No credit cards needed</div>
+        <div class="balance-max-label">Max wallet: ₹100 &nbsp;|&nbsp; Winnings show here after admin releases your payout</div>
+        <p style="font-size:12px;color:#7578A8;margin-top:12px;line-height:1.5;text-align:center;max-width:420px;margin-left:auto;margin-right:auto">
+          Withdrawals move money <em>out</em> of ChessWager. After you submit a withdraw request, your bank or UPI is typically credited <strong>within ~24 hours</strong>.
+        </p>
       </div>
 
       <!-- Quick amounts -->
@@ -321,23 +328,38 @@
         <div>
           <div class="wallet-action-card" style="margin-bottom:16px">
             <div class="wac-icon">🏆</div>
-            <h3>Pending Payouts</h3>
-            <p>Winnings held for 24h video review</p>
+            <h3>Winnings &amp; payouts</h3>
+            <p>Pending review, released to wallet, and past outcomes</p>
             <div id="payouts-list" style="margin-top:12px">
               <div style="font-size:13px;color:#7578A8">Loading…</div>
             </div>
           </div>
           <div class="wallet-action-card">
             <div class="wac-icon">🏦</div>
-            <h3>Withdraw</h3>
-            <p>Take out confirmed winnings</p>
+            <h3>Withdraw to bank / UPI</h3>
+            <p>We deduct this amount from your wallet balance. Your account is usually credited <strong>within 24 hours</strong>.</p>
+            <div id="withdraw-max-hint" style="font-size:13px;font-weight:800;color:#43C59E;margin-bottom:8px"></div>
             <div class="field-group">
               <input class="field-input" type="number" id="withdraw-amount"
                 placeholder="Amount to withdraw" min="1" step="1" />
             </div>
+            <div class="field-group">
+              <label class="field-label" for="withdraw-upi">Google Pay / UPI ID</label>
+              <input class="field-input" type="text" id="withdraw-upi"
+                placeholder="yourname@paytm or your UPIC ID" autocomplete="off" maxlength="120" />
+              <div style="font-size:11px;color:#7578A8;margin-top:4px">
+                Payouts are sent to this UPI address. Double-check before submitting.
+              </div>
+            </div>
             <button class="btn btn-secondary btn-block" id="withdraw-btn">Withdraw 🏦</button>
           </div>
         </div>
+      </div>
+
+      <!-- My withdrawal requests -->
+      <div class="tx-section">
+        <h3 class="tx-title">📤 My Withdrawal Requests</h3>
+        <div id="my-withdrawals-list" class="tx-list"></div>
       </div>
 
       <!-- My deposit requests -->
@@ -433,6 +455,6 @@
 <!-- ═══════════════════════ TOAST CONTAINER ══════════════════════════════ -->
 <div id="toasts"></div>
 
-<script src="/static/app.js?v=20260520a"></script>
+<script src="/static/app.js?v=20260519c"></script>
 </body>
 </html>

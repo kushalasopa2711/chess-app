@@ -63,7 +63,8 @@ const API = {
   me:              ()       => API.get('/auth/me'),
   getWallet:       ()       => API.get('/wallet/balance'),
   deposit:         (amt)    => API.post('/wallet/deposit',  {amount:amt}),
-  withdraw:        (amt)    => API.post('/wallet/withdraw', {amount:amt}),
+  withdraw:        (amt, upi) => API.post('/wallet/withdraw', { amount: amt, destination_upi: upi }),
+  myWithdrawals:   ()       => API.get('/wallet/my-withdrawals'),
   transactions:    ()       => API.get('/wallet/transactions'),
   upiInfo:         (amt)    => API.get(`/deposit/upi-info?amount=${amt}`),
   submitDeposit:   (amt, utr) => {
@@ -1130,35 +1131,94 @@ let _qrInstance = null;
 
 async function loadWallet() {
   try {
-    const [wallet, txs, payouts, deposits] = await Promise.all([
-      API.getWallet(), API.transactions(), API.myPayouts(), API.myDepositReqs(),
+    const [wallet, txs, payouts, deposits, withdrawals] = await Promise.all([
+      API.getWallet(),
+      API.transactions(),
+      API.myPayouts(),
+      API.myDepositReqs(),
+      API.myWithdrawals(),
     ]);
     S.wallet = wallet;
 
     document.getElementById('w-balance').textContent = `₹${wallet.balance.toFixed(2)}`;
     document.getElementById('w-locked').textContent  = `₹${wallet.total_invested.toFixed(2)}`;
+    const withdrawable = Math.max(0, Math.round((wallet.balance - wallet.total_invested) * 100) / 100);
+    const wW = document.getElementById('w-withdrawable');
+    if (wW) wW.textContent = `₹${withdrawable.toFixed(2)}`;
+    const wMaxHint = document.getElementById('withdraw-max-hint');
+    if (wMaxHint) {
+      wMaxHint.textContent = withdrawable > 0
+        ? `You may withdraw up to ₹${withdrawable.toFixed(2)} right now.`
+        : 'Nothing to withdraw yet (funds may be locked in an active game).';
+    }
     const pct = Math.min(100, (wallet.balance / 100) * 100);
     document.getElementById('w-progress').style.width = `${pct}%`;
     document.getElementById('nav-balance').textContent = `₹${wallet.balance.toFixed(2)}`;
 
-    // Pending payouts list
+    // Payout history (pending / approved / rejected)
     const pList = document.getElementById('payouts-list');
-    const pendingPayouts = payouts.filter(p => p.status === 'pending');
-    if (!pendingPayouts.length) {
-      pList.innerHTML = '<div style="font-size:13px;color:#7578A8">No pending payouts 🎉</div>';
+    if (!payouts.length) {
+      pList.innerHTML = '<div style="font-size:13px;color:#7578A8">No payout records yet.</div>';
     } else {
-      pList.innerHTML = pendingPayouts.map(p => {
-        const release = p.auto_release_at ? new Date(p.auto_release_at) : null;
-        const hoursLeft = release ? Math.max(0, ((release - Date.now()) / 3600000)).toFixed(1) : '?';
-        return `<div class="tx-item" style="margin-bottom:8px">
-          <div class="tx-icon">⏳</div>
-          <div class="tx-desc">
-            <div class="tx-desc-title">Game #${p.game_id} winnings</div>
-            <div class="tx-desc-date">Review in ~${hoursLeft}h · Platform fee: ₹${p.platform_fee.toFixed(2)}</div>
-          </div>
-          <div class="tx-amount pos">₹${p.net_amount.toFixed(2)}</div>
-        </div>`;
+      pList.innerHTML = payouts.map(p => {
+        if (p.status === 'pending') {
+          const release = p.auto_release_at ? new Date(p.auto_release_at) : null;
+          const hoursLeft = release ? Math.max(0, ((release - Date.now()) / 3600000)).toFixed(1) : '?';
+          return `<div class="tx-item" style="margin-bottom:8px">
+            <div class="tx-icon">⏳</div>
+            <div class="tx-desc">
+              <div class="tx-desc-title">Game #${p.game_id} · awaiting release</div>
+              <div class="tx-desc-date">Auto / review ~${hoursLeft}h left · Fee ₹${Number(p.platform_fee).toFixed(2)}</div>
+            </div>
+            <div class="tx-amount pos">₹${Number(p.net_amount).toFixed(2)}</div>
+          </div>`;
+        }
+        if (p.status === 'approved') {
+          return `<div class="tx-item" style="margin-bottom:8px">
+            <div class="tx-icon">✅</div>
+            <div class="tx-desc">
+              <div class="tx-desc-title">Game #${p.game_id} · credited to wallet</div>
+              <div class="tx-desc-date">Net ₹${Number(p.net_amount).toFixed(2)} added to balance — use Withdraw below to cash out (~24h to your UPI/bank)</div>
+            </div>
+            <div class="tx-amount pos">+₹${Number(p.net_amount).toFixed(2)}</div>
+          </div>`;
+        }
+        if (p.status === 'rejected' || p.status === 'penalized') {
+          return `<div class="tx-item" style="margin-bottom:8px">
+            <div class="tx-icon">❌</div>
+            <div class="tx-desc">
+              <div class="tx-desc-title">Game #${p.game_id} · payout not released</div>
+              <div class="tx-desc-date">${(p.rejection_reason || 'Rejected').slice(0, 120)}</div>
+            </div>
+            <div class="tx-amount neg">—</div>
+          </div>`;
+        }
+        return `<div class="tx-item" style="margin-bottom:8px"><div class="tx-desc">${p.status}</div></div>`;
       }).join('');
+    }
+
+    // My withdrawal requests (UPI)
+    const wDrawList = document.getElementById('my-withdrawals-list');
+    if (wDrawList) {
+      if (!withdrawals.length) {
+        wDrawList.innerHTML = '<div class="empty-state">No withdrawal requests yet</div>';
+      } else {
+        const wIcons = { pending: '⏳', completed: '✅', rejected: '❌' };
+        const escMini = (s) =>
+          String(s || '')
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;');
+        wDrawList.innerHTML = withdrawals.map(w => `
+        <div class="tx-item">
+          <div class="tx-icon">${wIcons[w.status] || '📤'}</div>
+          <div class="tx-desc">
+            <div class="tx-desc-title">₹${Number(w.amount).toFixed(2)} → ${escMini(w.destination_upi)}</div>
+            <div class="tx-desc-date">${new Date(w.created_at).toLocaleString('en-IN')}${w.rejection_reason ? ' · ' + escMini(w.rejection_reason).slice(0, 200) : ''}</div>
+          </div>
+          <div class="tx-amount" style="font-size:13px;font-weight:800;color:${w.status === 'completed' ? '#43C59E' : w.status === 'rejected' ? '#FF5252' : '#FF9800'}">${String(w.status).toUpperCase()}</div>
+        </div>`).join('');
+      }
     }
 
     // My deposit requests
@@ -1191,7 +1251,7 @@ async function loadWallet() {
             <div class="tx-icon">${icons[tx.type]||'💸'}</div>
             <div class="tx-desc">
               <div class="tx-desc-title">${tx.description || tx.type}</div>
-              <div class="tx-desc-date">${new Date(tx.created_at).toLocaleString('en-IN')}</div>
+              <div class="tx-desc-date">${new Date(tx.created_at).toLocaleString('en-IN')}${tx.type === 'withdrawal' ? ' · Bank/UPI credit usually within ~24h' : ''}</div>
             </div>
             <div class="tx-amount ${isPos?'pos':'neg'}">${isPos?'+':'-'}₹${Math.abs(tx.amount).toFixed(2)}</div>
           </div>`;
@@ -1521,10 +1581,22 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   document.getElementById('withdraw-btn').addEventListener('click', async () => {
     const amt = parseFloat(document.getElementById('withdraw-amount').value);
+    const upiEl = document.getElementById('withdraw-upi');
+    const upi = (upiEl && upiEl.value) ? upiEl.value.trim() : '';
     if (!amt || amt < 1) { Toast.err('Enter a valid amount'); return; }
+    if (!upi || !upi.includes('@')) {
+      Toast.err('Enter your Google Pay / UPI ID (e.g. name@paytm or name@oksbi)');
+      return;
+    }
     try {
-      await API.withdraw(amt);
-      Toast.ok(`₹${amt.toFixed(2)} withdrawn! 🏦`);
+      await API.withdraw(amt, upi);
+      Toast.show(
+        `Withdrawal of ₹${amt.toFixed(2)} to <strong>${upi}</strong> submitted. UPI payout is usually within about <strong>24 hours</strong> (processed manually).`,
+        'success',
+        9000,
+      );
+      document.getElementById('withdraw-amount').value = '';
+      if (upiEl) upiEl.value = '';
       loadWallet();
     } catch(e) { Toast.err(e.message); }
   });

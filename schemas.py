@@ -71,11 +71,25 @@ class DepositRequest(BaseModel):
 
 class WithdrawRequest(BaseModel):
     amount: float = Field(..., gt=0)
+    destination_upi: str = Field(
+        ...,
+        min_length=5,
+        max_length=100,
+        description="Google Pay / PhonePe UPI ID (e.g. name@okicici)",
+    )
 
     @field_validator("amount")
     @classmethod
     def round_to_paise(cls, v: float) -> float:
         return round(v, 2)
+
+    @field_validator("destination_upi")
+    @classmethod
+    def normalize_upi(cls, v: str) -> str:
+        s = (v or "").strip()
+        if "@" not in s:
+            raise ValueError("Enter a valid UPI address like yourname@paytm or name@okicici.")
+        return s
 
 
 class TransactionOut(BaseModel):
