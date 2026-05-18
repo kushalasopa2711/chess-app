@@ -11,9 +11,12 @@ Move flow:
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import datetime, timedelta
 from typing import Optional
+
+CPU_MOVE_DELAY_SEC = 0.6
 
 import chess
 import chess.pgn
@@ -810,6 +813,7 @@ async def make_move_rest(
     await emit_move(human_move, user.id, game_over_after_human)
 
     if cpu_move:
+        await asyncio.sleep(CPU_MOVE_DELAY_SEC)
         disp_b2 = _board_from_game(game)
         w2, b2 = _clock_display_millis(game, disp_b2)
         await manager.broadcast_to_game(game_id, {
@@ -1100,6 +1104,7 @@ async def websocket_game(
                     })
 
                     if cpu_move:
+                        await asyncio.sleep(CPU_MOVE_DELAY_SEC)
                         disp_b2 = _board_from_game(game)
                         w2, b2 = _clock_display_millis(game, disp_b2)
                         await manager.broadcast_to_game(game_id, {

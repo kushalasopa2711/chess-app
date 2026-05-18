@@ -26,6 +26,8 @@ const S = {
   tabHiddenAt: null,
   clockTimer: null,       // setInterval id for live clock display
   clock:      { whiteMs: 0, blackMs: 0, turn: 'w', syncAt: 0 },
+  movePending: false,     // true while a sent move awaits server confirmation
+  movePendingTimer: null, // safety timeout to release the lock if WS hiccups
 };
 
 // ── Piece unicode map ────────────────────────────────────────────────────────
@@ -323,9 +325,17 @@ function renderLabels(flipped) {
   });
 }
 
-function onSquareClick(sq, piece, turn) {
+function onSquareClick(sq, piece, _turnAtRender) {
   if (!S.game || S.game.status !== 'active') return;
+  if (S.movePending) {
+    Toast.warn("Sending your move… ⏳");
+    return;
+  }
 
+  // Always read whose turn it is from the *current* FEN, not the closure-captured
+  // value at the moment of render. Otherwise stale clicks racing with the server
+  // produce a confusing "It is not your turn." error.
+  const { turn } = parseFEN(S.game.fen);
   const myTurn = (S.myColor === 'white' && turn === 'w') ||
                  (S.myColor === 'black' && turn === 'b');
   const isMyPiece = piece &&
@@ -358,36 +368,82 @@ function onSquareClick(sq, piece, turn) {
   sendMove(move);
 }
 
+// Visually move the piece DOM element so the user sees their move *before*
+// the WebSocket reply arrives. The next "move" event re-renders from the
+// authoritative FEN, fixing castling/en-passant/promotion edge cases.
+function optimisticMovePiece(from, to) {
+  try {
+    const fromCell = document.querySelector(`.sq[data-sq="${from}"]`);
+    const toCell   = document.querySelector(`.sq[data-sq="${to}"]`);
+    if (!fromCell || !toCell) return;
+    const piece = fromCell.querySelector('.piece');
+    toCell.querySelectorAll('.piece').forEach(p => p.remove());
+    if (piece) toCell.appendChild(piece);
+    document.querySelectorAll('.sq.last-from, .sq.last-to, .sq.selected')
+      .forEach(el => el.classList.remove('last-from', 'last-to', 'selected'));
+    fromCell.classList.add('last-from');
+    toCell.classList.add('last-to');
+  } catch (_e) { /* visual only — never throw */ }
+}
+
+function clearMoveLock() {
+  S.movePending = false;
+  if (S.movePendingTimer) {
+    clearTimeout(S.movePendingTimer);
+    S.movePendingTimer = null;
+  }
+}
+
 async function sendMove(move) {
+  if (S.movePending) return;
   const from = move.slice(0, 2);
   const to   = move.slice(2, 4);
 
-  if (S.ws && S.ws.readyState === WebSocket.OPEN) {
-    S.ws.send(JSON.stringify({
-      type: 'move',
-      data: { move, client_timestamp: Date.now() },
-    }));
-    S.selected = null;
-    S.lastFrom = from;
-    S.lastTo   = to;
-  } else {
-    // REST fallback
-    try {
-      const res = await API.makeMove(S.game.id, move);
-      S.selected = null;
-      S.lastFrom = from;
-      S.lastTo   = to;
-      if (res.time_forfeit) {
-        await refreshGame();
-        showResult(res.result, 'time_forfeit');
-        return;
-      }
-      await refreshGame();
-    } catch(e) {
-      Toast.err(`Move error: ${e.message}`);
-      S.selected = null;
-      renderBoard(S.game.fen);
+  S.movePending = true;
+  S.selected    = null;
+  S.lastFrom    = from;
+  S.lastTo      = to;
+  optimisticMovePiece(from, to);
+
+  // Safety: if the server never acks (network drop, etc.), release the lock
+  // after 6s so the player isn't stuck staring at a frozen board.
+  if (S.movePendingTimer) clearTimeout(S.movePendingTimer);
+  S.movePendingTimer = setTimeout(() => {
+    if (S.movePending) {
+      clearMoveLock();
+      if (S.game) renderBoard(S.game.fen);
+      Toast.warn('No response from server — try again.');
     }
+  }, 6000);
+
+  if (S.ws && S.ws.readyState === WebSocket.OPEN) {
+    try {
+      S.ws.send(JSON.stringify({
+        type: 'move',
+        data: { move, client_timestamp: Date.now() },
+      }));
+    } catch (e) {
+      clearMoveLock();
+      Toast.err(`Move error: ${e.message || e}`);
+      if (S.game) renderBoard(S.game.fen);
+    }
+    return;
+  }
+
+  // REST fallback
+  try {
+    const res = await API.makeMove(S.game.id, move);
+    clearMoveLock();
+    if (res.time_forfeit) {
+      await refreshGame();
+      showResult(res.result, 'time_forfeit');
+      return;
+    }
+    await refreshGame();
+  } catch(e) {
+    clearMoveLock();
+    Toast.err(`Move error: ${e.message}`);
+    if (S.game) renderBoard(S.game.fen);
   }
 }
 
@@ -431,6 +487,8 @@ async function handleWSMessage(msg) {
   }
 
   if (type === 'move') {
+    // Server confirmed someone's move — if it was ours, release the input lock.
+    if (data.player_id === S.user?.id) clearMoveLock();
     S.game.fen = data.fen;
     S.lastFrom = data.move_uci?.slice(0,2);
     S.lastTo   = data.move_uci?.slice(2,4);
@@ -452,6 +510,7 @@ async function handleWSMessage(msg) {
   }
 
   if (type === 'game_over') {
+    clearMoveLock();
     await refreshGame();
     showResult(data.result, data.reason);
   }
@@ -468,6 +527,7 @@ async function handleWSMessage(msg) {
   }
 
   if (type === 'error') {
+    clearMoveLock();
     Toast.err(`🚫 ${data.message}`);
     S.selected = null;
     renderBoard(S.game.fen);
@@ -1552,17 +1612,40 @@ document.addEventListener('DOMContentLoaded', async () => {
       'Yes, I resign', 'Keep playing');
     if (!ok) return;
 
+    clearMoveLock();
+    const finishResignUI = async () => {
+      try { await refreshGame(); } catch (_e) { /* ignore */ }
+      const winner = S.myColor === 'white' ? 'black' : 'white';
+      showResult(winner, 'resignation');
+    };
+
+    // Prefer the open WebSocket — the server will broadcast "game_over"
+    // and our WS handler will call refreshGame + showResult. We ALSO arm a
+    // safety net so the result UI shows even if the WS message is lost.
+    if (S.ws && S.ws.readyState === WebSocket.OPEN) {
+      try {
+        S.ws.send(JSON.stringify({ type: 'resign' }));
+      } catch (_e) { /* fall through to REST */ }
+      setTimeout(() => {
+        if (S.game && S.game.status === 'active') finishResignUI();
+      }, 2000);
+      return;
+    }
+
+    // REST fallback
     try {
-      if (S.ws) {
-        try { S.ws.close(); } catch (e) { /* ignore */ }
-        S.ws = null;
-      }
       await API.resign(S.game.id);
-      await refreshGame();
-      showResult(S.myColor === 'white' ? 'black' : 'white', 'resignation');
+      await finishResignUI();
     } catch (e) {
+      const msg = String(e?.message || '').toLowerCase();
+      // Server says "Game is not active." → it ended on a previous click /
+      // a timeout / opponent already-won race. Treat as success and show
+      // the result overlay so the user is not stuck on a frozen board.
+      if (msg.includes('not active') || msg.includes('completed') || msg.includes('finished')) {
+        await finishResignUI();
+        return;
+      }
       Toast.err(e.message || 'Could not resign');
-      if (S.game && S.game.status === 'active' && S.token) connectWS(S.game.id);
     }
   });
 
