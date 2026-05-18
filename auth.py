@@ -3,8 +3,8 @@ from typing import Optional
 
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+import bcrypt
 from jose import JWTError, jwt
-from passlib.context import CryptContext
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -13,16 +13,26 @@ from database import get_db
 from models import User
 from schemas import TokenData
 
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 bearer_scheme = HTTPBearer()
 
 
+def _bcrypt_secret(password: str) -> bytes:
+    """bcrypt only uses the first 72 bytes of UTF-8 (passlib did this implicitly)."""
+    return password.encode("utf-8")[:72]
+
+
 def hash_password(password: str) -> str:
-    return pwd_context.hash(password)
+    return bcrypt.hashpw(_bcrypt_secret(password), bcrypt.gensalt(rounds=12)).decode("ascii")
 
 
 def verify_password(plain: str, hashed: str) -> bool:
-    return pwd_context.verify(plain, hashed)
+    try:
+        return bcrypt.checkpw(
+            _bcrypt_secret(plain),
+            hashed.encode("ascii"),
+        )
+    except (ValueError, TypeError):
+        return False
 
 
 def create_access_token(user_id: int, expires_delta: Optional[timedelta] = None) -> str:

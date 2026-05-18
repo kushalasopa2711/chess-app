@@ -6,7 +6,7 @@ aiosqlite==0.22.1
 asyncpg==0.31.0
 aiofiles==24.1.0
 python-jose[cryptography]==3.5.0
-passlib[bcrypt]==1.7.4
+bcrypt==5.0.0
 python-multipart==0.0.29
 python-dotenv==1.2.2
 websockets==16.0
