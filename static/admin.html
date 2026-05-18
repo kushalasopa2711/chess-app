@@ -552,6 +552,7 @@ async function api(method, path, body) {
 }
 const get  = (p) => api('GET',  p);
 const post = (p, b) => api('POST', p, b);
+const del  = (p) => api('DELETE', p);
 
 // ── Toast ─────────────────────────────────────────────────────────────────
 function toast(msg, type = 'ok') {
@@ -740,7 +741,9 @@ async function loadUsers(page = _page_users) {
               <button class="act-btn act-deduct" onclick="deductFunds(${u.id},'${esc(u.username)}')">- Funds</button>
               ${u.is_banned
                 ? `<button class="act-btn act-unban" onclick="unbanUser(${u.id},'${esc(u.username)}')">Unban</button>`
-                : `<button class="act-btn act-ban" onclick="banUser(${u.id},'${esc(u.username)}')">Ban</button>`}
+                : `<button class="act-btn act-ban" onclick="banUser(${u.id},'${esc(u.username)}')">Ban</button>`
+              }
+              <button class="act-btn" style="background:#5C2B29;border:1px solid #FF5252;color:#FFCDD2" onclick="deleteUser(${u.id},'${esc(u.username)}')">Delete</button>
             </div>
           </td>
         </tr>`).join('');
@@ -963,6 +966,32 @@ function unbanUser(uid, uname) {
       closePopup(); loadUsers();
     } catch(e) { toast(e.message, 'err'); }
   });
+}
+
+async function deleteUser(uid, uname) {
+  if (!confirm(`Delete user "${uname}" (#${uid})?\n\nThey can register again with the same username or email.\n\nSafe delete will fail if they played games with someone else.`)) return;
+  const url = (f) => `/admin/users/${uid}?admin_key=${encodeURIComponent(ADMIN_KEY)}&force=${f}`;
+  try {
+    await del(url(false));
+    toast(`User ${uname} deleted.`, 'ok');
+    loadUsers();
+    loadOverview();
+  } catch (e) {
+    const msg = String(e.message || '');
+    if (msg.includes('force') || msg.includes('another person')) {
+      if (!confirm(`FORCE delete "${uname}"?\n\nThis also deletes every game they were in (opponents lose that game history in the database). Continue?`)) return;
+      try {
+        await del(url(true));
+        toast(`User ${uname} and their games were deleted.`, 'ok');
+        loadUsers();
+        loadOverview();
+      } catch (e2) {
+        toast(e2.message, 'err');
+      }
+    } else {
+      toast(msg, 'err');
+    }
+  }
 }
 
 function penaliseFromVideo(uid, uname, gameId) {

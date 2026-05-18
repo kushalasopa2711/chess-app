@@ -8,6 +8,7 @@ Endpoints:
   POST /admin/users/{id}/deduct-funds– deduct from wallet
   POST /admin/users/{id}/ban         – ban account
   POST /admin/users/{id}/unban       – unban account
+  DELETE /admin/users/{id}           – delete user (optional force=true removes their games too)
   GET  /admin/games              – all games (paginated)
   GET  /admin/flags              – all anti-cheat flags
   GET  /admin/penalties          – all applied penalties
@@ -20,12 +21,12 @@ from datetime import datetime
 from typing import Optional
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import get_db
 from models import (
-    AntiCheatFlag, DepositRequest, Game, GameStatus, Penalty,
+    AntiCheatFlag, DepositRequest, Game, GameStatus, Move, Penalty,
     PendingPayout, Transaction, TransactionType, User, VideoChunk, Wallet,
 )
 
@@ -245,6 +246,105 @@ async def unban_user(
     user.ban_reason = None
     await db.commit()
     return {"user_id": user_id, "banned": False}
+
+
+async def _delete_games_cascade(db: AsyncSession, game_ids: list[int]) -> None:
+    if not game_ids:
+        return
+    await db.execute(delete(Move).where(Move.game_id.in_(game_ids)))
+    await db.execute(delete(AntiCheatFlag).where(AntiCheatFlag.game_id.in_(game_ids)))
+    await db.execute(delete(VideoChunk).where(VideoChunk.game_id.in_(game_ids)))
+    await db.execute(delete(PendingPayout).where(PendingPayout.game_id.in_(game_ids)))
+    await db.execute(delete(Transaction).where(Transaction.game_id.in_(game_ids)))
+    await db.execute(delete(Game).where(Game.id.in_(game_ids)))
+
+
+async def _release_solo_waiting_bets(db: AsyncSession, games: list[Game]) -> None:
+    """If we're deleting a solo waiting lobby, unlock the creator's total_invested."""
+    for g in games:
+        if g.status == GameStatus.WAITING and g.black_player_id is None:
+            w_r = await db.execute(select(Wallet).where(Wallet.user_id == g.white_player_id))
+            wallet = w_r.scalar_one_or_none()
+            if wallet:
+                wallet.total_invested = max(0.0, round(wallet.total_invested - g.bet_amount, 2))
+                db.add(wallet)
+
+
+@router.delete("/users/{user_id}")
+async def delete_user(
+    user_id: int,
+    admin_key: str = Query(""),
+    force: bool = Query(
+        False,
+        description="If true, deletes all games this user joined (affects opponents' history too).",
+    ),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Remove a user so they can sign up again with the same username/email.
+
+    Without force: only allowed if the user has no games with another player
+    (you may still have solo 'waiting' lobbies — those games are removed).
+
+    With force: deletes every game they were part of and all related rows.
+    """
+    _auth(admin_key)
+
+    user_r = await db.execute(select(User).where(User.id == user_id))
+    user = user_r.scalar_one_or_none()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found.")
+
+    g_r = await db.execute(
+        select(Game).where(
+            (Game.white_player_id == user_id)
+            | (Game.black_player_id == user_id)
+            | (Game.winner_id == user_id)
+        )
+    )
+    games = g_r.scalars().all()
+
+    def _blocks_soft_delete(g: Game) -> bool:
+        if g.black_player_id is not None:
+            return True
+        if g.status != GameStatus.WAITING:
+            return True
+        return False
+
+    blocking = [g for g in games if _blocks_soft_delete(g)]
+    solo_waiting = [g for g in games if not _blocks_soft_delete(g)]
+
+    if blocking and not force:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "This player has games with another person (or non-waiting games). "
+                "Delete with query parameter force=true to remove those games entirely "
+                "(this also deletes history for their opponents for those games)."
+            ),
+        )
+
+    ids_to_cascade = [g.id for g in (games if force else solo_waiting)]
+    games_to_remove = games if force else solo_waiting
+    await _release_solo_waiting_bets(db, games_to_remove)
+    await _delete_games_cascade(db, ids_to_cascade)
+
+    await db.execute(delete(PendingPayout).where(PendingPayout.user_id == user_id))
+    await db.execute(delete(DepositRequest).where(DepositRequest.user_id == user_id))
+    await db.execute(delete(Penalty).where(Penalty.user_id == user_id))
+    await db.execute(delete(AntiCheatFlag).where(AntiCheatFlag.user_id == user_id))
+    await db.execute(delete(VideoChunk).where(VideoChunk.user_id == user_id))
+    await db.execute(delete(Transaction).where(Transaction.user_id == user_id))
+    await db.execute(delete(Wallet).where(Wallet.user_id == user_id))
+    await db.execute(delete(User).where(User.id == user_id))
+    await db.commit()
+
+    return {
+        "deleted": True,
+        "user_id": user_id,
+        "games_removed": len(ids_to_cascade),
+        "forced": force,
+    }
 
 
 # ── Games ────────────────────────────────────────────────────────────────────
