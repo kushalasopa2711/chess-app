@@ -13,13 +13,14 @@ router = APIRouter(prefix="/auth", tags=["Authentication"])
 @router.post("/register", response_model=UserProfile, status_code=201)
 async def register(payload: UserRegister, db: AsyncSession = Depends(get_db)):
     """Create a new player account. A wallet is automatically created with ₹0 balance."""
-    # Check uniqueness
-    existing = await db.execute(
-        select(User).where(
-            (User.username == payload.username) | (User.email == payload.email)
-        )
+    # Check uniqueness (never use scalar_one_or_none on ORM row select — two different
+    # users could match username vs email and SQLAlchemy raises MultipleResultsFound → 500).
+    taken = await db.execute(
+        select(User.id)
+        .where((User.username == payload.username) | (User.email == payload.email))
+        .limit(1)
     )
-    if existing.scalar_one_or_none():
+    if taken.scalar_one_or_none() is not None:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="Username or email already registered.",

@@ -1090,17 +1090,16 @@ document.addEventListener('DOMContentLoaded', async () => {
     const btn = e.target.querySelector('button[type=submit]');
     btn.disabled = true; btn.textContent = 'Creating account… ⏳';
     try {
-      await API.register(
+      const user = await API.register(
         document.getElementById('reg-username').value.trim(),
         document.getElementById('reg-email').value.trim(),
         document.getElementById('reg-password').value,
       );
-      // Auto-login
+      // Auto-login (/auth/me needs Bearer token — set it only after login)
       const data = await API.login(
         document.getElementById('reg-username').value.trim(),
         document.getElementById('reg-password').value,
       );
-      const user = await API.req('GET', '/auth/me');
       afterLogin(data.access_token, user);
       Toast.ok('Welcome to ChessWager! 🎉');
     } catch(e) {
