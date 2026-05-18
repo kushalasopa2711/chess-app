@@ -562,12 +562,27 @@ async def stream_video_chunk(
     vc = vc_r.scalar_one_or_none()
     if not vc:
         raise HTTPException(status_code=404, detail="Chunk not found.")
-    path = Path(vc.file_path).resolve()
-    try:
-        path.relative_to(VIDEOS_STORAGE_ROOT)
-    except ValueError:
-        raise HTTPException(status_code=403, detail="Recording path is outside videos/ storage.")
-    if not path.is_file():
+    root = VIDEOS_STORAGE_ROOT
+    candidates: list[Path] = []
+    raw = Path(vc.file_path)
+    if raw.is_absolute():
+        candidates.append(raw.resolve())
+    else:
+        candidates.append((Path.cwd() / raw).resolve())
+    candidates.append(
+        root / str(vc.game_id) / str(vc.user_id) / f"chunk_{vc.chunk_number:04d}.webm"
+    )
+    path: Optional[Path] = None
+    for cand in candidates:
+        try:
+            rp = cand.resolve()
+            rp.relative_to(root)
+            if rp.is_file():
+                path = rp
+                break
+        except ValueError:
+            continue
+    if path is None:
         raise HTTPException(
             status_code=404,
             detail="Recording file missing on disk (path may differ after deploy or cleanup).",
@@ -576,6 +591,7 @@ async def stream_video_chunk(
         path,
         media_type="video/webm",
         filename=f"game{vc.game_id}_user{vc.user_id}_chunk{vc.chunk_number:04d}.webm",
+        content_disposition_type="inline",
     )
 
 

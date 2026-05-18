@@ -308,6 +308,21 @@ a:hover { text-decoration: underline; }
 }
 
 /* ═══════════════════════════════ GAME VIEW ════════════════════════════ */
+.game-back-bar {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 12px 24px 0;
+}
+.game-back-hint {
+  font-size: 12px;
+  color: var(--txt2);
+  font-weight: 600;
+}
+.page-back-btn { margin-bottom: 8px; display: inline-flex; }
 .game-wrap {
   display: grid;
   grid-template-columns: auto 320px;
@@ -600,16 +615,38 @@ a:hover { text-decoration: underline; }
 .modal-box {
   background: white; border-radius: 24px;
   padding: 40px 36px; max-width: 420px; width: 90%;
+  max-height: min(92vh, 720px);
+  display: flex;
+  flex-direction: column;
   box-shadow: 0 24px 64px rgba(0,0,0,.25);
   text-align: center;
   transform: scale(.92);
   transition: transform .2s;
 }
 .modal-overlay.open .modal-box { transform: scale(1); }
-.modal-icon { font-size: 52px; margin-bottom: 16px; }
-.modal-title { font-size: 22px; font-weight: 900; color: var(--txt); margin-bottom: 10px; }
-.modal-body { font-size: 16px; color: var(--txt2); line-height: 1.5; margin-bottom: 28px; }
-.modal-feet { display: flex; gap: 12px; justify-content: center; }
+.modal-icon { font-size: 52px; margin-bottom: 16px; flex-shrink: 0; }
+.modal-title { font-size: 22px; font-weight: 900; color: var(--txt); margin-bottom: 10px; flex-shrink: 0; }
+.modal-body {
+  font-size: 16px;
+  color: var(--txt2);
+  line-height: 1.5;
+  margin-bottom: 20px;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  text-align: center;
+}
+.modal-body.modal-body--form {
+  text-align: left;
+}
+.modal-feet {
+  display: flex;
+  gap: 12px;
+  justify-content: center;
+  flex-shrink: 0;
+  padding-top: 8px;
+}
 
 /* ═══════════════════════════ GAME RESULT ════════════════════════════ */
 .result-overlay {

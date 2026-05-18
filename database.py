@@ -82,7 +82,11 @@ async def _ensure_cpu_user_async() -> None:
 
     async with AsyncSessionLocal() as session:
         r = await session.execute(select(User).where(User.username == CPU_BOT_USERNAME))
-        if r.scalar_one_or_none():
+        existing = r.scalar_one_or_none()
+        if existing:
+            if not existing.is_bot:
+                existing.is_bot = True
+                await session.commit()
             return
         u = User(
             username=CPU_BOT_USERNAME,

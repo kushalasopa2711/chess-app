@@ -6,7 +6,7 @@
   <title>♟ ChessWager – Play Chess & Win!</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;700;800;900&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/static/style.css" />
+  <link rel="stylesheet" href="/static/style.css?v=20260520a" />
   <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
 </head>
 <body>
@@ -160,6 +160,10 @@
 
   <!-- ── GAME ───────────────────────────────────────────────────────────── -->
   <section id="view-game" class="view">
+    <div class="game-back-bar">
+      <button type="button" class="btn btn-ghost btn-sm" id="back-to-lobby-btn">← Lobby</button>
+      <span class="game-back-hint">Return anytime — your table stays in Open / Live lists.</span>
+    </div>
     <div class="game-wrap">
 
       <!-- Left: board + players -->
@@ -254,6 +258,7 @@
     <div class="page-wrap">
       <div class="page-header">
         <div>
+          <button type="button" class="btn btn-ghost btn-sm page-back-btn" data-back-view="lobby">← Lobby</button>
           <h2 class="page-title">💰 My Wallet</h2>
           <p class="page-sub">Deposit, withdraw, and track your money</p>
         </div>
@@ -355,7 +360,10 @@
   <section id="view-profile" class="view">
     <div class="page-wrap">
       <div class="page-header">
-        <h2 class="page-title">👤 My Profile</h2>
+        <div>
+          <button type="button" class="btn btn-ghost btn-sm page-back-btn" data-back-view="lobby">← Lobby</button>
+          <h2 class="page-title">👤 My Profile</h2>
+        </div>
       </div>
 
       <div class="profile-hero">
@@ -402,7 +410,7 @@
   <div class="modal-box" id="modal-box">
     <div class="modal-icon" id="modal-icon">❓</div>
     <h3 class="modal-title" id="modal-title">Title</h3>
-    <p class="modal-body" id="modal-body">Body text here</p>
+    <div class="modal-body" id="modal-body">Body text here</div>
     <div class="modal-feet">
       <button class="btn btn-ghost" id="modal-cancel">Cancel</button>
       <button class="btn btn-primary" id="modal-ok">OK</button>
@@ -425,6 +433,6 @@
 <!-- ═══════════════════════ TOAST CONTAINER ══════════════════════════════ -->
 <div id="toasts"></div>
 
-<script src="/static/app.js?v=20260519f"></script>
+<script src="/static/app.js?v=20260520a"></script>
 </body>
 </html>

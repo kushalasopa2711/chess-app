@@ -143,7 +143,9 @@ const Modal = {
       Modal._cb = resolve;
       document.getElementById('modal-icon').textContent  = icon;
       document.getElementById('modal-title').textContent = title;
-      document.getElementById('modal-body').textContent  = body;
+      const mb = document.getElementById('modal-body');
+      mb.classList.remove('modal-body--form');
+      mb.textContent = body;
       document.getElementById('modal-ok').textContent    = confirmLabel;
       document.getElementById('modal-cancel').textContent= cancelLabel;
       document.getElementById('modal-overlay').classList.add('open');
@@ -980,6 +982,7 @@ async function createGame() {
       <span>I understand: for <strong>head-to-head games</strong>, <strong>both players</strong> need usable webcam footage on file before a win can be verified and paid; for <strong>vs computer</strong>, only your recording matters. If video is off, unclear, or missing, prize money may not be credited.</span>
     </label>
     <small style="color:#7578A8;display:block;text-align:center;margin-top:8px">Max ₹100 per bet · <a href="#" onclick="return false" style="pointer-events:none">Terms required to create a cash table</a></small>`;
+  document.getElementById('modal-body').classList.add('modal-body--form');
   document.getElementById('modal-cancel').textContent = 'Cancel';
   document.getElementById('modal-ok').textContent     = 'Create Game! ♟';
   overlayEl.classList.add('open');
@@ -1353,7 +1356,22 @@ const App = {
     loadLobby();
   },
 };
+
+async function leaveToLobby() {
+  if (S.game && S.game.status === 'active' && S.myColor) {
+    const ok = await Modal.show(
+      '🏠',
+      'Leave the table?',
+      'You can rejoin from Open Games or Live Now. To concede the result, use Resign.',
+      'Leave to lobby',
+      'Stay',
+    );
+    if (!ok) return;
+  }
+  App.goLobby();
+}
 window.App = App;
+window.leaveToLobby = leaveToLobby;
 window.showView = showView;
 window.joinGame = joinGame;
 window.watchGame = watchGame;
@@ -1440,6 +1458,17 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   // ── Create game ──
   document.getElementById('create-game-btn').addEventListener('click', createGame);
+
+  document.getElementById('back-to-lobby-btn')?.addEventListener('click', () => leaveToLobby());
+
+  document.querySelectorAll('.page-back-btn').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      if (btn.dataset.backView === 'lobby') {
+        showView('lobby');
+        loadLobby();
+      }
+    });
+  });
 
   // ── Modal buttons ──
   document.getElementById('modal-ok').addEventListener('click', () => Modal.close(true));

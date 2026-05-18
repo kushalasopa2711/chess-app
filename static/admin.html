@@ -65,6 +65,7 @@
   .sb-link:hover { background: #252A40; color: #E2E8F0; }
   .sb-link.active { background: rgba(108,99,255,.18); color: #6C63FF; }
   .sb-link .icon { font-size: 18px; width: 22px; text-align: center; }
+  a.sb-link { text-decoration: none; color: inherit; }
   .sb-bottom { padding: 14px 10px; border-top: 1px solid #2D3555; }
   .sb-key {
     font-size: 11px; color: #4A5280; word-break: break-all;
@@ -275,6 +276,7 @@
     <div class="login-sub">ChessWager · Secure Admin Access</div>
     <input class="login-input" type="password" id="key-input" placeholder="Enter admin secret key" />
     <button class="login-btn" onclick="doLogin()">Unlock Dashboard 🔓</button>
+    <p style="margin-top:18px;text-align:center"><a href="/" style="color:#7B8CB8;font-size:14px;font-weight:700;text-decoration:none">← Back to ChessWager</a></p>
   </div>
 </div>
 
@@ -289,6 +291,9 @@
       <span class="sb-badge">ADMIN</span>
     </div>
     <nav class="sb-nav">
+      <a class="sb-link" href="/" id="sb-home-link">
+        <span class="icon">🏠</span> Main site
+      </a>
       <button class="sb-link active" data-sec="overview" onclick="goto('overview',this)">
         <span class="icon">📊</span> Overview
       </button>
@@ -887,37 +892,79 @@ async function loadFlags(severity = '') {
   }
 }
 
-// ── Videos (grouped sessions) ───────────────────────────────────────────────
+// ── Videos (grouped sessions) — load via fetch+blob so playback matches auth + MIME
 let _playlistIds = [];
 let _plIdx = 0;
 let _plGameId = null;
 let _plUser = '';
+let _videoBlobUrl = null;
+
+function _revokeVideoBlobUrl() {
+  if (_videoBlobUrl) {
+    URL.revokeObjectURL(_videoBlobUrl);
+    _videoBlobUrl = null;
+  }
+}
+
+async function _loadChunkIntoPlayer(chunkId) {
+  const url = `/admin/videos/${chunkId}/file?admin_key=${encodeURIComponent(ADMIN_KEY)}`;
+  const r = await fetch(url);
+  if (!r.ok) {
+    const t = await r.text();
+    let msg = `HTTP ${r.status}`;
+    try {
+      const j = JSON.parse(t);
+      if (j.detail != null) msg = typeof j.detail === 'string' ? j.detail : JSON.stringify(j.detail);
+    } catch (_) {
+      if (t) msg = t.slice(0, 220);
+    }
+    throw new Error(msg);
+  }
+  const blob = await r.blob();
+  _revokeVideoBlobUrl();
+  _videoBlobUrl = URL.createObjectURL(blob);
+  const v = document.getElementById('video-preview-el');
+  v.src = _videoBlobUrl;
+}
 
 function playAdminSession(chunkIds, username, gameId) {
+  void _playAdminSession(chunkIds, username, gameId);
+}
+
+async function _playAdminSession(chunkIds, username, gameId) {
   if (!chunkIds || !chunkIds.length) return;
   _playlistIds = chunkIds.slice();
   _plIdx = 0;
   _plGameId = gameId;
   _plUser = username || 'User';
   const v = document.getElementById('video-preview-el');
+  v.onerror = () => toast('Video playback error — file may be missing or corrupt.', 'err');
   const metaText = () =>
     `Game #${_plGameId} · clip ${_plIdx + 1} of ${_playlistIds.length} · ${_plUser}`;
-  v.onended = () => {
+  v.onended = async () => {
     _plIdx++;
     if (_plIdx >= _playlistIds.length) {
       v.onended = null;
       return;
     }
-    v.src = `/admin/videos/${_playlistIds[_plIdx]}/file?admin_key=${encodeURIComponent(ADMIN_KEY)}`;
-    document.getElementById('video-preview-meta').textContent = metaText();
-    v.play().catch(() => {});
+    try {
+      await _loadChunkIntoPlayer(_playlistIds[_plIdx]);
+      document.getElementById('video-preview-meta').textContent = metaText();
+      await v.play();
+    } catch (e) {
+      toast('Next clip failed: ' + e.message, 'err');
+    }
   };
   document.getElementById('video-preview-title').textContent =
     _playlistIds.length > 1 ? `Recording session (${_playlistIds.length} clips)` : 'Recording';
   document.getElementById('video-preview-meta').textContent = metaText();
-  v.src = `/admin/videos/${_playlistIds[0]}/file?admin_key=${encodeURIComponent(ADMIN_KEY)}`;
   document.getElementById('video-preview-overlay').classList.add('open');
-  v.play().catch(() => {});
+  try {
+    await _loadChunkIntoPlayer(_playlistIds[0]);
+    await v.play();
+  } catch (e) {
+    toast('Video failed: ' + e.message, 'err');
+  }
 }
 
 function playAdminVideo(chunkId, username, gameId, chunkNum) {
@@ -929,7 +976,9 @@ function playAdminVideo(chunkId, username, gameId, chunkNum) {
 function closeVideoPreview() {
   const v = document.getElementById('video-preview-el');
   v.onended = null;
+  v.onerror = null;
   _playlistIds = [];
+  _revokeVideoBlobUrl();
   v.pause();
   v.removeAttribute('src');
   v.load();
