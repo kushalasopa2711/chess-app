@@ -477,7 +477,10 @@
     <!-- ── REVENUE ── -->
     <section id="sec-revenue" class="section">
       <div class="sec-header">
-        <div><div class="sec-title">📈 Platform Revenue</div></div>
+        <div>
+          <div class="sec-title">📈 Platform Revenue</div>
+          <div class="sec-sub" style="max-width:640px">From <strong>finished games</strong> only (your % fee when a payout is released). UPI deposits are player money — they do not add to this.</div>
+        </div>
         <button class="btn-refresh" onclick="loadRevenue()">🔄 Refresh</button>
       </div>
       <div class="stat-grid" id="rev-grid">
@@ -934,7 +937,7 @@ function addFunds(uid, uname) {
     const note = document.getElementById('popup-note').value || 'Admin credit';
     if (!amt || amt <= 0) { toast('Enter a valid amount', 'err'); return; }
     try {
-      const r = await get(`/admin/users/${uid}/add-funds?admin_key=${ADMIN_KEY}&amount=${amt}&note=${encodeURIComponent(note)}`);
+      const r = await post(`/admin/users/${uid}/add-funds?admin_key=${ADMIN_KEY}&amount=${amt}&note=${encodeURIComponent(note)}`);
       toast(`✅ Added ₹${amt} to ${uname}. New balance: ₹${r.new_balance}`, 'ok');
       closePopup(); loadUsers();
     } catch(e) { toast(e.message, 'err'); }
@@ -947,7 +950,7 @@ function deductFunds(uid, uname) {
     const note = document.getElementById('popup-note').value || 'Admin deduction';
     if (!amt || amt <= 0) { toast('Enter a valid amount', 'err'); return; }
     try {
-      const r = await get(`/admin/users/${uid}/deduct-funds?admin_key=${ADMIN_KEY}&amount=${amt}&note=${encodeURIComponent(note)}`);
+      const r = await post(`/admin/users/${uid}/deduct-funds?admin_key=${ADMIN_KEY}&amount=${amt}&note=${encodeURIComponent(note)}`);
       toast(`✅ Deducted ₹${r.deducted} from ${uname}. New balance: ₹${r.new_balance}`, 'ok');
       closePopup(); loadUsers();
     } catch(e) { toast(e.message, 'err'); }
@@ -958,7 +961,7 @@ function banUser(uid, uname) {
   openPopup(`🚫 Ban ${uname}`, 'This will prevent the player from logging in or playing.', false, 'Ban Account', async () => {
     const reason = document.getElementById('popup-note').value || 'Admin action';
     try {
-      await get(`/admin/users/${uid}/ban?admin_key=${ADMIN_KEY}&reason=${encodeURIComponent(reason)}`);
+      await post(`/admin/users/${uid}/ban?admin_key=${ADMIN_KEY}&reason=${encodeURIComponent(reason)}`);
       toast(`🚫 ${uname} has been banned.`, 'ok');
       closePopup(); loadUsers();
     } catch(e) { toast(e.message, 'err'); }
@@ -968,7 +971,7 @@ function banUser(uid, uname) {
 function unbanUser(uid, uname) {
   openPopup(`✅ Unban ${uname}`, 'This will restore full access to the account.', false, 'Unban', async () => {
     try {
-      await get(`/admin/users/${uid}/unban?admin_key=${ADMIN_KEY}`);
+      await post(`/admin/users/${uid}/unban?admin_key=${ADMIN_KEY}`);
       toast(`✅ ${uname} has been unbanned.`, 'ok');
       closePopup(); loadUsers();
     } catch(e) { toast(e.message, 'err'); }
@@ -1061,7 +1064,7 @@ async function approveDeposit(id, uname, amount) {
   const ok = confirm(`✅ Approve ₹${amount} deposit for ${uname}?\nThis will credit their wallet immediately.`);
   if (!ok) return;
   try {
-    const r = await get(`/admin/deposits/${id}/approve?admin_key=${ADMIN_KEY}`);
+    const r = await post(`/admin/deposits/${id}/approve?admin_key=${ADMIN_KEY}`);
     toast(`✅ ₹${r.credited} credited to user #${r.user_id}`, 'ok');
     loadDeposits('pending');
   } catch(e) { toast(e.message, 'err'); }
@@ -1071,7 +1074,7 @@ async function rejectDeposit(id) {
   openPopup('❌ Reject Deposit', 'Enter a reason for rejection (shown to player).', false, 'Reject', async () => {
     const reason = document.getElementById('popup-note').value || 'UTR not verified';
     try {
-      await get(`/admin/deposits/${id}/reject?admin_key=${ADMIN_KEY}&reason=${encodeURIComponent(reason)}`);
+      await post(`/admin/deposits/${id}/reject?admin_key=${ADMIN_KEY}&reason=${encodeURIComponent(reason)}`);
       toast('Deposit rejected.', 'ok');
       closePopup(); loadDeposits('pending');
     } catch(e) { toast(e.message, 'err'); }
@@ -1116,7 +1119,7 @@ async function releasePayout(id, uname, net) {
   const ok = confirm(`✅ Release ₹${net} to ${uname}?\nOnly do this after reviewing their video footage and confirming no cheating.`);
   if (!ok) return;
   try {
-    const r = await get(`/admin/payouts/${id}/approve?admin_key=${ADMIN_KEY}`);
+    const r = await post(`/admin/payouts/${id}/approve?admin_key=${ADMIN_KEY}`);
     toast(`✅ ₹${r.released} released to user #${r.user_id}`, 'ok');
     loadPayouts('pending');
   } catch(e) { toast(e.message, 'err'); }
@@ -1132,7 +1135,7 @@ async function rejectPayout(id, uname) {
       const penalty = parseFloat(document.getElementById('popup-amount').value) || 0;
       const doBan = note.toUpperCase().includes('BAN');
       try {
-        const r = await get(`/admin/payouts/${id}/reject?admin_key=${ADMIN_KEY}&reason=${encodeURIComponent(note)}&penalty_amount=${penalty}&ban=${doBan}`);
+        const r = await post(`/admin/payouts/${id}/reject?admin_key=${ADMIN_KEY}&reason=${encodeURIComponent(note)}&penalty_amount=${penalty}&ban=${doBan}`);
         toast(`🚫 Payout rejected. Withheld ₹${r.payout_withheld}. Penalty ₹${r.penalty_deducted}.${r.banned?' BANNED.':''}`, 'ok');
         closePopup(); loadPayouts('pending');
       } catch(e) { toast(e.message, 'err'); }
