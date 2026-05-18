@@ -5,7 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from auth import create_access_token, hash_password, verify_password, get_current_user
 from database import get_db
 from models import User, Wallet
-from schemas import Token, UserLogin, UserRegister, UserProfile
+from schemas import LoginResponse, UserLogin, UserRegister, UserProfile
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
 
@@ -41,9 +41,9 @@ async def register(payload: UserRegister, db: AsyncSession = Depends(get_db)):
     return user
 
 
-@router.post("/login", response_model=Token)
+@router.post("/login", response_model=LoginResponse)
 async def login(payload: UserLogin, db: AsyncSession = Depends(get_db)):
-    """Login and receive a JWT bearer token."""
+    """Login and receive a JWT bearer token plus profile (no extra /auth/me needed)."""
     result = await db.execute(select(User).where(User.username == payload.username))
     user = result.scalar_one_or_none()
 
@@ -61,7 +61,7 @@ async def login(payload: UserLogin, db: AsyncSession = Depends(get_db)):
         )
 
     token = create_access_token(user.id)
-    return Token(access_token=token)
+    return LoginResponse(access_token=token, user=UserProfile.model_validate(user))
 
 
 @router.get("/me", response_model=UserProfile)

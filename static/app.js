@@ -1118,9 +1118,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         document.getElementById('login-username').value.trim(),
         document.getElementById('login-password').value,
       );
-      S.token = data.access_token;
-      const user = await API.req('GET', '/auth/me');
-      afterLogin(data.access_token, user);
+      afterLogin(data.access_token, data.user);
       Toast.ok(`Welcome back, ${user.username}! ♟`);
     } catch(e) {
       Toast.err(e.message);

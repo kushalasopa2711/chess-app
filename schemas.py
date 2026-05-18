@@ -43,6 +43,13 @@ class UserProfile(UserPublic):
     email: str
 
 
+class LoginResponse(BaseModel):
+    """JWT plus profile in one round trip (avoids /auth/me before token is applied client-side)."""
+    access_token: str
+    token_type: str = "bearer"
+    user: UserProfile
+
+
 # ─── Wallet ───────────────────────────────────────────────────────────────────
 
 class WalletOut(BaseModel):
