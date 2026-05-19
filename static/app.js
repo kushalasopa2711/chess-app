@@ -39,6 +39,13 @@ const S = {
   wsLastDropToast: 0,     // throttle "connection dropped" toasts
 };
 
+let _webcamPromptPromise = null;
+
+/** True when MediaRecorder is running for the game currently open in S.game. */
+function isWebcamRecordingCurrentGame() {
+  return !!(S.video && S.video.active && S.game && Number(S.video.gameId) === Number(S.game.id));
+}
+
 // ── Piece unicode map ────────────────────────────────────────────────────────
 const PIECES = {
   K:'♔', Q:'♕', R:'♖', B:'♗', N:'♘', P:'♙',
@@ -648,7 +655,7 @@ async function handleWSMessage(msg) {
     Toast.ok(vsCpu ? 'Playing versus computer! You have White ♟' : 'Opponent joined! Game is starting 🎉');
     await refreshGame();
     updateTurnBanner();
-    if (S.game.bet_amount > 0 && S.myColor) promptWebcam();
+    if (S.game.bet_amount > 0 && S.myColor) await promptWebcam();
   }
 
   if (type === 'move') {
@@ -894,9 +901,43 @@ class VideoMonitor {
     this.recorder  = null;
     this.chunkNum  = 0;
     this.active    = false;
+    this._uploadChain = Promise.resolve();
+    this._pulseTimer = null;
+  }
+
+  /** Serialize chunk uploads so slow networks do not drop parallel in-flight parts. */
+  _enqueueUpload(blob, idx) {
+    this._uploadChain = this._uploadChain.then(async () => {
+      for (let attempt = 0; attempt < 3; attempt++) {
+        try {
+          await API.uploadChunk(this.gameId, blob, idx);
+          return;
+        } catch (err) {
+          if (attempt === 2) console.warn('Chunk upload failed after retries:', idx, err);
+          else await new Promise((r) => setTimeout(r, 700 * (attempt + 1)));
+        }
+      }
+    });
+  }
+
+  _startPulse() {
+    if (this._pulseTimer) clearInterval(this._pulseTimer);
+    // Extra pull in case the browser batches timeslice dataavailable (common in background tabs).
+    this._pulseTimer = setInterval(() => {
+      try {
+        if (this.recorder && this.recorder.state === 'recording') this.recorder.requestData();
+      } catch (_e) { /* ignore */ }
+    }, 10000);
+  }
+
+  flushSlice() {
+    try {
+      if (this.recorder && this.recorder.state === 'recording') this.recorder.requestData();
+    } catch (_e) { /* ignore */ }
   }
 
   async start() {
+    if (this.active && this.recorder && this.recorder.state === 'recording') return;
     try {
       this.stream = await navigator.mediaDevices.getUserMedia({
         video: { width: 320, height: 240, facingMode: 'user' },
@@ -920,55 +961,74 @@ class VideoMonitor {
       ? 'video/webm;codecs=vp8' : 'video/webm';
 
     this.recorder = new MediaRecorder(this.stream, { mimeType, videoBitsPerSecond: 500000 });
-    // Timeslice so the browser emits a blob every N ms — otherwise you only get
-    // one short clip at stop() and admins cannot review a 5+ minute game.
-    const SLICE_MS = 15000;
+    // Timeslice + periodic requestData so we get many segments for long games (not one blob at the end).
+    const SLICE_MS = 10000;
     this.recorder.ondataavailable = (e) => {
-      if (!e.data || e.data.size < 256) return;
+      if (!e.data || e.data.size < 128) return;
       const idx = this.chunkNum++;
-      API.uploadChunk(this.gameId, e.data, idx)
-        .catch(err => console.warn('Chunk upload failed:', err));
+      this._enqueueUpload(e.data, idx);
     };
+    this.recorder.onerror = (ev) => console.warn('MediaRecorder error', ev?.error || ev);
     try {
       this.recorder.start(SLICE_MS);
     } catch (_e) {
       try { this.recorder.start(); } catch (_e2) { /* last resort */ }
     }
+    this._startPulse();
   }
 
   stop() {
     this.active = false;
+    if (this._pulseTimer) {
+      clearInterval(this._pulseTimer);
+      this._pulseTimer = null;
+    }
     try {
       if (this.recorder && this.recorder.state === 'recording') {
         try { this.recorder.requestData(); } catch (_e) { /* ignore */ }
       }
       if (this.recorder && this.recorder.state !== 'inactive') this.recorder.stop();
-      if (this.stream) this.stream.getTracks().forEach(t => t.stop());
-    } catch(e) { /* ignore */ }
+      if (this.stream) this.stream.getTracks().forEach((t) => t.stop());
+    } catch (e) { /* ignore */ }
+    this.recorder = null;
+    this.stream = null;
     document.getElementById('cam-preview').srcObject = null;
     document.getElementById('cam-status').textContent = 'Recording stopped';
   }
 }
 
 async function promptWebcam() {
-  const vsCpu = S.game?.is_vs_cpu;
-  const body = vsCpu
-    ? `Recording helps approve your win. Video is uploaded in ~15 second segments during the game (so reviewers see the full session, not just the last few seconds). For vs-CPU, only your side needs usable video on file. (₹${S.game.bet_amount} table)`
-    : `Multiplayer: reviewers need usable video from both players. The camera uploads ~15 second segments throughout the game so the recording length matches real play time. If either side has no usable recording, payouts may be denied. (₹${S.game.bet_amount} table)`;
-  const confirmed = await Modal.show(
-    '📹',
-    'Webcam & prize review',
-    body,
-    'Enable Camera 📷',
-    'Continue without camera',
-  );
-  if (confirmed) {
-    S.video = new VideoMonitor(S.game.id);
-    await S.video.start();
-  } else {
-    API.reportNoCamera(S.game.id, 'User declined camera').catch(() => {});
-    Toast.warn('⚠️ No camera – this session has been flagged for review.');
-  }
+  if (!S.game || !(Number(S.game.bet_amount) > 0) || !S.myColor) return;
+  if (isWebcamRecordingCurrentGame()) return;
+  if (_webcamPromptPromise) return _webcamPromptPromise;
+
+  _webcamPromptPromise = (async () => {
+    try {
+      const vsCpu = S.game?.is_vs_cpu;
+      const body = vsCpu
+        ? `Recording helps approve your win. Video uploads about every 10 seconds while you play (so reviewers get the full game, not just the last moments). For vs-CPU, only your side needs usable video on file. (₹${S.game.bet_amount} table)`
+        : `Multiplayer: reviewers need usable video from both players. The camera uploads about every 10 seconds during the game so evidence covers the whole match. If either side has no usable recording, payouts may be denied. (₹${S.game.bet_amount} table)`;
+      const confirmed = await Modal.show(
+        '📹',
+        'Webcam & prize review',
+        body,
+        'Enable Camera 📷',
+        'Continue without camera',
+      );
+      if (confirmed) {
+        if (isWebcamRecordingCurrentGame()) return;
+        S.video = new VideoMonitor(S.game.id);
+        await S.video.start();
+      } else {
+        API.reportNoCamera(S.game.id, 'User declined camera').catch(() => {});
+        Toast.warn('⚠️ No camera – this session has been flagged for review.');
+      }
+    } finally {
+      _webcamPromptPromise = null;
+    }
+  })();
+
+  return _webcamPromptPromise;
 }
 
 // Tab-visibility anti-cheat
@@ -979,11 +1039,19 @@ document.addEventListener('visibilitychange', () => {
   } else if (S.tabHiddenAt) {
     const ms = Date.now() - S.tabHiddenAt;
     S.tabHiddenAt = null;
+    if (S.video && S.video.active) S.video.flushSlice();
     if (ms > 3000) {
-      Toast.warn(`⚠️ You were away for ${Math.round(ms/1000)}s – this has been noted.`);
+      Toast.warn(`⚠️ You were away for ${Math.round(ms / 1000)}s – this has been noted.`);
       API.reportTabHidden(S.game.id, ms).catch(() => {});
     }
   }
+});
+
+// Best-effort: flush a recording slice when the user leaves the tab (mobile Safari, etc.).
+window.addEventListener('pagehide', () => {
+  try {
+    if (S.video && S.video.active) S.video.flushSlice();
+  } catch (_e) { /* ignore */ }
 });
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -1103,7 +1171,7 @@ async function resumeGame(gameId) {
       await watchGame(gameId);
       return;
     }
-    enterGame(game, myColor);
+    await enterGame(game, myColor);
   } catch (e) {
     Toast.err(e.message || 'Could not open game');
   }
@@ -1252,7 +1320,7 @@ async function createGame() {
           ? `Game #${game.id} — White vs computer!`
           : `Game #${game.id} — share the invite with a friend.`,
       );
-      enterGame(game, 'white');
+      await enterGame(game, 'white');
     } catch(e) {
       Toast.err(`Couldn't create game: ${e.message}`);
     }
@@ -1267,7 +1335,7 @@ async function joinGame(gameId) {
   try {
     const game = await API.joinGame(gameId);
     Toast.ok('You joined the game! Good luck! 🎉');
-    enterGame(game, 'black');
+    await enterGame(game, 'black');
   } catch(e) {
     Toast.err(`Couldn't join: ${e.message}`);
   }
@@ -1347,9 +1415,10 @@ async function enterGame(game, myColor) {
   // WebSocket
   connectWS(game.id);
 
-  // Webcam for bet games that are already active
-  if (game.status === 'active' && game.bet_amount > 0) {
-    promptWebcam();
+  // Webcam for bet games that are already active — await so recording begins before
+  // the first move (vs CPU / resumed tables); duplicate prompts are coalesced.
+  if (game.status === 'active' && game.bet_amount > 0 && myColor) {
+    await promptWebcam();
   }
 
   // Share link
@@ -1870,7 +1939,8 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   // ── Webcam start button ──
   document.getElementById('start-cam-btn').addEventListener('click', async () => {
-    if (!S.video) S.video = new VideoMonitor(S.game?.id || 0);
+    if (!S.game?.id) return;
+    if (!S.video || S.video.gameId !== S.game.id) S.video = new VideoMonitor(S.game.id);
     await S.video.start();
   });
 

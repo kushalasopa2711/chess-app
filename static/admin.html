@@ -484,7 +484,7 @@
           <div class="sec-sub" id="videos-count">Loading…</div>
           <div class="sec-sub" id="videos-retention" style="margin-top:6px;color:#FFD580;line-height:1.55"></div>
           <div class="sec-sub" style="margin-top:10px;max-width:720px;line-height:1.55">
-            <strong>Clean</strong> is not an auto quality score — it only means no segment in this session is manually flagged yet. Recordings are stored under <code>videos/&lt;game_id&gt;/&lt;user_id&gt;/</code>. Each row is one <strong>session</strong> (player + game); clients upload in short slices (~15s WebM each), so a single file opened directly may look like a few seconds of media until you use <strong>▶ Play</strong> to queue every chunk in order for the full match.
+            <strong>Clean</strong> is not an auto quality score — it only means no segment in this session is manually flagged yet. Recordings are stored under <code>videos/&lt;game_id&gt;/&lt;user_id&gt;/</code>. Each row is one <strong>session</strong> (player + game); clients upload in short slices (~10s WebM each, serialized uploads + retries), so a single file opened directly may look short until you use <strong>▶ Play</strong> to queue every chunk in order for the full match.
           </div>
         </div>
         <div style="display:flex;gap:8px;flex-wrap:wrap">
