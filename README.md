@@ -24,7 +24,7 @@ All of these protections run **on the server**; clients cannot bypass them.
 
 1. **Server-side move validation** — every move is checked with `python-chess`. Illegal moves are rejected before being stored.
 2. **Move timing analysis** — moves submitted in under 500 ms are flagged. Five consecutive ultra-fast moves trigger an automatic ban.
-3. **Illegal-move-attempt tracking** — repeated illegal move submissions in one game can trigger an account ban (threshold configurable via `MAX_ILLEGAL_MOVE_ATTEMPTS_PER_GAME`, default 12). Legitimate lag or mis-taps should be far less likely to hit this than under the old fixed threshold.
+3. **Illegal-move-attempt tracking** — repeated illegal move submissions in one game can trigger an account ban (threshold configurable via `MAX_ILLEGAL_MOVE_ATTEMPTS_PER_GAME`, default 12). The same rejected move string within `ILLEGAL_MOVE_DEDUPE_WINDOW_SEC` (default 4s) only counts **once** toward that limit, which cuts false pressure from double HTTP posts and quick retries on bad networks.
 4. **One session per player per game** — if a second WebSocket connection opens, the first is forcibly disconnected (prevents multi-tab engine use).
 5. **Minimum move time** — configurable floor (default 500 ms); any move below it is logged as a suspicious event.
 
@@ -65,6 +65,11 @@ Interactive API docs: **http://localhost:8000/docs**
 | `MAX_WALLET_BALANCE` | `100` | Hard cap on wallet balance |
 | `MIN_BET` / `MAX_BET` | `10` / `100` | Stake bounds |
 | `MIN_MOVE_TIME_MS` | `500` | Minimum milliseconds between moves |
+| `MAX_ILLEGAL_MOVE_ATTEMPTS_PER_GAME` | `12` | Server-rejected illegal UCI attempts per game before auto-ban |
+| `ILLEGAL_MOVE_DEDUPE_WINDOW_SEC` | `4.0` | Identical illegal payload within this window increments the counter only once |
+| `CPU_MOVE_DELAY_SEC` | `0.05` | Pause before pushing the built-in CPU move to clients (lower = snappier) |
+| `CPU_AI_MAIN_DEPTH` | `3` | Engine search depth (2–8; higher = stronger, slower) |
+| `CPU_AI_QUIESCENCE_CAP` | `4` | Capture extension depth cap (2–10) |
 | `UPI_ID` / `UPI_NAME` / `UPI_NOTE` | dev defaults | Your real UPI payee details — used for deposit QR generation. |
 
 ---

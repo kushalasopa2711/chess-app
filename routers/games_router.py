@@ -16,8 +16,6 @@ import logging
 from datetime import datetime, timedelta
 from typing import Optional
 
-CPU_MOVE_DELAY_SEC = 0.2
-
 import chess
 import chess.pgn
 from fastapi import APIRouter, Depends, HTTPException, Query, WebSocket, WebSocketDisconnect, status
@@ -27,7 +25,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 import anticheat
 from auth import get_active_unbanned_user, get_current_user
-from config import MAX_WALLET_BALANCE, MIN_BET, MAX_BET, PLATFORM_FEE_PERCENT, PAYOUT_HOLD_HOURS, CPU_BOT_USERNAME
+from config import (
+    MAX_WALLET_BALANCE,
+    MIN_BET,
+    MAX_BET,
+    PLATFORM_FEE_PERCENT,
+    PAYOUT_HOLD_HOURS,
+    CPU_BOT_USERNAME,
+    CPU_MOVE_DELAY_SEC,
+)
 from database import get_db, AsyncSessionLocal
 from models import (
     Game, GameStatus, Move, PendingPayout, Transaction, TransactionType, User, Wallet

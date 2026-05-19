@@ -3,9 +3,11 @@ from __future__ import annotations
 
 import chess
 
-# ── Search limits (tune for server CPU; higher = stronger / slower) ─────────
-MAIN_DEPTH = 4
-QUIESCENCE_CAP = 6
+from config import CPU_AI_MAIN_DEPTH, CPU_AI_QUIESCENCE_CAP
+
+# Search limits (override via CPU_AI_MAIN_DEPTH / CPU_AI_QUIESCENCE_CAP env).
+MAIN_DEPTH = max(2, min(8, CPU_AI_MAIN_DEPTH))
+QUIESCENCE_CAP = max(2, min(10, CPU_AI_QUIESCENCE_CAP))
 MATE_SCORE = 100_000
 
 PIECE_VAL = {

@@ -91,6 +91,11 @@ MIN_MOVE_TIME_MS: int          = int(os.getenv("MIN_MOVE_TIME_MS", "500"))
 MAX_ILLEGAL_MOVE_ATTEMPTS_PER_GAME: int = int(
     os.getenv("MAX_ILLEGAL_MOVE_ATTEMPTS_PER_GAME", "12")
 )
+# Identical illegal move string from the same player within this window only counts once
+# toward the auto-ban counter (mitigates double HTTP / timeout retries on laggy links).
+ILLEGAL_MOVE_DEDUPE_WINDOW_SEC: float = float(
+    os.getenv("ILLEGAL_MOVE_DEDUPE_WINDOW_SEC", "4.0")
+)
 ANTICHEAT_FAST_MOVE_THRESHOLD_MS: int = 500
 ANTICHEAT_FAST_MOVE_STREAK: int       = 5
 ANTICHEAT_ACCURACY_THRESHOLD: float   = 0.95
@@ -98,6 +103,11 @@ ANTICHEAT_ACCURACY_THRESHOLD: float   = 0.95
 # ── CPU opponent (system user) ─────────────────────────────────────────────
 CPU_BOT_USERNAME: str = os.getenv("CPU_BOT_USERNAME", "ChessWagerCPU")
 CPU_BOT_EMAIL: str = os.getenv("CPU_BOT_EMAIL", "cpu@chesswager.internal")
+# Artificial pause before broadcasting the bot move (seconds). Lower = snappier CPU.
+CPU_MOVE_DELAY_SEC: float = float(os.getenv("CPU_MOVE_DELAY_SEC", "0.05"))
+# Alpha-beta depth for built-in engine (higher = stronger but slower). Default tuned for speed.
+CPU_AI_MAIN_DEPTH: int = int(os.getenv("CPU_AI_MAIN_DEPTH", "3"))
+CPU_AI_QUIESCENCE_CAP: int = int(os.getenv("CPU_AI_QUIESCENCE_CAP", "4"))
 
 # ── Admin ─────────────────────────────────────────────────────────────────────
 _admin_raw = os.getenv("ADMIN_SECRET", "").strip()

@@ -11,6 +11,7 @@ Protections implemented:
 from __future__ import annotations
 
 import logging
+import time
 from datetime import datetime
 from typing import List, Optional
 
@@ -20,6 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from config import (
     ANTICHEAT_FAST_MOVE_STREAK,
     ANTICHEAT_FAST_MOVE_THRESHOLD_MS,
+    ILLEGAL_MOVE_DEDUPE_WINDOW_SEC,
     MAX_ILLEGAL_MOVE_ATTEMPTS_PER_GAME,
     MIN_MOVE_TIME_MS,
 )
@@ -30,6 +32,8 @@ logger = logging.getLogger(__name__)
 # Per-game illegal-move-attempt counter (in memory; cleared on server restart)
 # Structure: {game_id: {user_id: count}}
 _illegal_attempt_counter: dict[int, dict[int, int]] = {}
+# (game_id, user_id, normalized_move_str) -> monotonic time when we last incremented the counter
+_illegal_dedupe_last_increment: dict[tuple[int, int, str], float] = {}
 
 MAX_ILLEGAL_ATTEMPTS = max(3, MAX_ILLEGAL_MOVE_ATTEMPTS_PER_GAME)
 
@@ -106,6 +110,25 @@ async def record_illegal_attempt(
     Record an illegal move attempt.
     Returns True if the player should be banned.
     """
+    move_key = (attempted_move or "").strip()
+    dedupe_key = (game_id, player_id, move_key)
+    now = time.monotonic()
+    prev = _illegal_dedupe_last_increment.get(dedupe_key)
+    if (
+        prev is not None
+        and ILLEGAL_MOVE_DEDUPE_WINDOW_SEC > 0
+        and (now - prev) < ILLEGAL_MOVE_DEDUPE_WINDOW_SEC
+    ):
+        # Same rejected payload again quickly — usually a retry or double submit, not a new cheat attempt.
+        return False
+
+    _illegal_dedupe_last_increment[dedupe_key] = now
+    if len(_illegal_dedupe_last_increment) > 2000:
+        cutoff = now - 120.0
+        stale = [k for k, t in _illegal_dedupe_last_increment.items() if t < cutoff]
+        for k in stale[:800]:
+            _illegal_dedupe_last_increment.pop(k, None)
+
     if game_id not in _illegal_attempt_counter:
         _illegal_attempt_counter[game_id] = {}
 
