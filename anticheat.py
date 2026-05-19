@@ -20,6 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from config import (
     ANTICHEAT_FAST_MOVE_STREAK,
     ANTICHEAT_FAST_MOVE_THRESHOLD_MS,
+    MAX_ILLEGAL_MOVE_ATTEMPTS_PER_GAME,
     MIN_MOVE_TIME_MS,
 )
 from models import AntiCheatFlag, FlagType, Move, User
@@ -30,7 +31,7 @@ logger = logging.getLogger(__name__)
 # Structure: {game_id: {user_id: count}}
 _illegal_attempt_counter: dict[int, dict[int, int]] = {}
 
-MAX_ILLEGAL_ATTEMPTS = 5  # ban after this many illegal move submissions in one game
+MAX_ILLEGAL_ATTEMPTS = max(3, MAX_ILLEGAL_MOVE_ATTEMPTS_PER_GAME)
 
 
 async def record_move_and_check(

@@ -36,6 +36,9 @@ logging.basicConfig(
     level=logging.INFO if IS_PROD else logging.DEBUG,
     format="%(asctime)s %(levelname)s %(name)s %(message)s",
 )
+# Huge DEBUG spam on every multipart upload (video chunks) — never useful in ops logs.
+logging.getLogger("python_multipart").setLevel(logging.WARNING)
+logging.getLogger("multipart").setLevel(logging.WARNING)
 logger = logging.getLogger(__name__)
 
 

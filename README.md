@@ -24,7 +24,7 @@ All of these protections run **on the server**; clients cannot bypass them.
 
 1. **Server-side move validation** — every move is checked with `python-chess`. Illegal moves are rejected before being stored.
 2. **Move timing analysis** — moves submitted in under 500 ms are flagged. Five consecutive ultra-fast moves trigger an automatic ban.
-3. **Illegal-move-attempt tracking** — submitting ≥5 illegal moves in one game results in an account ban.
+3. **Illegal-move-attempt tracking** — repeated illegal move submissions in one game can trigger an account ban (threshold configurable via `MAX_ILLEGAL_MOVE_ATTEMPTS_PER_GAME`, default 12). Legitimate lag or mis-taps should be far less likely to hit this than under the old fixed threshold.
 4. **One session per player per game** — if a second WebSocket connection opens, the first is forcibly disconnected (prevents multi-tab engine use).
 5. **Minimum move time** — configurable floor (default 500 ms); any move below it is logged as a suspicious event.
 

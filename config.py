@@ -86,6 +86,11 @@ UPI_NOTE: str                  = os.getenv("UPI_NOTE", "ChessWager Deposit")
 
 # ── Anti-cheat thresholds ─────────────────────────────────────────────────────
 MIN_MOVE_TIME_MS: int          = int(os.getenv("MIN_MOVE_TIME_MS", "500"))
+# Server-side illegal UCI attempts per game before auto-ban (laggy clients /
+# double-taps used to hit the old default of 5 too easily).
+MAX_ILLEGAL_MOVE_ATTEMPTS_PER_GAME: int = int(
+    os.getenv("MAX_ILLEGAL_MOVE_ATTEMPTS_PER_GAME", "12")
+)
 ANTICHEAT_FAST_MOVE_THRESHOLD_MS: int = 500
 ANTICHEAT_FAST_MOVE_STREAK: int       = 5
 ANTICHEAT_ACCURACY_THRESHOLD: float   = 0.95

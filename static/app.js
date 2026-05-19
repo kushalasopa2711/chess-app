@@ -35,6 +35,8 @@ const S = {
   movePendingTimer: null, // safety timeout to release the lock if WS hiccups
   userWs:     null,       // per-user notification WebSocket
   userWsReconnectTimer: null,
+  wsReconnectBurst: 0,   // exponential backoff for game WS reconnect
+  wsLastDropToast: 0,     // throttle "connection dropped" toasts
 };
 
 // ── Piece unicode map ────────────────────────────────────────────────────────
@@ -52,7 +54,7 @@ const PIECE_NAMES = {
 const API = {
   // All API calls share a hard timeout so a stuck/cold-starting backend never
   // hangs the UI forever (e.g. resign sitting on "Resigning…").
-  async req(method, path, body, isForm = false, timeoutMs = 12000) {
+  async req(method, path, body, isForm = false, timeoutMs = 22000) {
     const headers = {};
     if (S.token) headers['Authorization'] = `Bearer ${S.token}`;
     if (body && !isForm) headers['Content-Type'] = 'application/json';
@@ -69,9 +71,13 @@ const API = {
     } catch (e) {
       clearTimeout(t);
       if (e && e.name === 'AbortError') {
-        throw new Error('Server did not respond in time. Please try again.');
+        throw new Error('Request timed out — slow network or busy server. Please try again.');
       }
-      throw new Error(e?.message || 'Network error — check your connection.');
+      const raw = (e && e.message) ? String(e.message) : '';
+      if (/failed to fetch|networkerror|load failed|internet|offline/i.test(raw)) {
+        throw new Error('Could not reach the server right now. If you are on Wi‑Fi, try again in a moment (the app will keep reconnecting during play).');
+      }
+      throw new Error(raw || 'Temporary network issue — please try again.');
     }
     clearTimeout(t);
     const data = await res.json().catch(() => ({}));
@@ -131,7 +137,8 @@ const API = {
     const fd = new FormData();
     fd.append('chunk', blob, `chunk_${num}.webm`);
     fd.append('chunk_number', num);
-    return API.req('POST', `/video/${id}/chunk`, fd, true);
+    // Large WebM slices on slow mobile networks need a generous ceiling.
+    return API.req('POST', `/video/${id}/chunk`, fd, true, 120000);
   },
 };
 
@@ -563,6 +570,9 @@ function connectWS(gameId) {
   if (S.wsReconnectTimer) { clearTimeout(S.wsReconnectTimer); S.wsReconnectTimer = null; }
   if (S.ws) { try { S.ws.close(); } catch (_e) {} S.ws = null; }
   S.wsClosedManually = false;
+  if (S.wsGameId != null && S.wsGameId !== gameId) {
+    S.wsReconnectBurst = 0;
+  }
   S.wsGameId = gameId;
 
   const url = `${WS_PROTO}://${WS_HOST}/games/ws/${gameId}?token=${S.token}`;
@@ -578,6 +588,7 @@ function connectWS(gameId) {
 
   ws.onopen = () => {
     console.log('WS connected', gameId);
+    S.wsReconnectBurst = 0;
     startWSHeartbeat();
     // Re-sync state in case we missed events while disconnected.
     refreshGame().then(updateTurnBanner).catch(() => {});
@@ -602,14 +613,20 @@ function connectWS(gameId) {
     if (S.wsClosedManually) return;
     // Auto-reconnect if the game is still active and we still want this one.
     if (S.game && S.game.id === gameId && S.game.status === 'active') {
-      Toast.warn('Live connection dropped — reconnecting…');
+      const now = Date.now();
+      if (now - (S.wsLastDropToast || 0) > 28000) {
+        S.wsLastDropToast = now;
+        Toast.warn('Live connection dropped — reconnecting… (moves still work via backup sync)');
+      }
       scheduleWSReconnect(gameId);
     }
   };
 }
 
-function scheduleWSReconnect(gameId, delayMs = 1500) {
+function scheduleWSReconnect(gameId) {
   if (S.wsReconnectTimer) clearTimeout(S.wsReconnectTimer);
+  S.wsReconnectBurst = (S.wsReconnectBurst || 0) + 1;
+  const delayMs = Math.min(45000, Math.round(2000 * Math.pow(1.65, S.wsReconnectBurst - 1)));
   S.wsReconnectTimer = setTimeout(() => {
     S.wsReconnectTimer = null;
     if (!S.game || S.game.id !== gameId || S.game.status !== 'active') return;
@@ -902,21 +919,29 @@ class VideoMonitor {
     const mimeType = MediaRecorder.isTypeSupported('video/webm;codecs=vp8')
       ? 'video/webm;codecs=vp8' : 'video/webm';
 
-    const chunkIndex = this.chunkNum++;
     this.recorder = new MediaRecorder(this.stream, { mimeType, videoBitsPerSecond: 500000 });
+    // Timeslice so the browser emits a blob every N ms — otherwise you only get
+    // one short clip at stop() and admins cannot review a 5+ minute game.
+    const SLICE_MS = 15000;
     this.recorder.ondataavailable = (e) => {
-      if (e.data && e.data.size > 1000) {
-        API.uploadChunk(this.gameId, e.data, chunkIndex)
-           .catch(err => console.warn('Chunk upload failed:', err));
-      }
+      if (!e.data || e.data.size < 256) return;
+      const idx = this.chunkNum++;
+      API.uploadChunk(this.gameId, e.data, idx)
+        .catch(err => console.warn('Chunk upload failed:', err));
     };
-    // One WebM blob for the whole recording run (until stop) — admin sees one row per session per camera start.
-    this.recorder.start();
+    try {
+      this.recorder.start(SLICE_MS);
+    } catch (_e) {
+      try { this.recorder.start(); } catch (_e2) { /* last resort */ }
+    }
   }
 
   stop() {
     this.active = false;
     try {
+      if (this.recorder && this.recorder.state === 'recording') {
+        try { this.recorder.requestData(); } catch (_e) { /* ignore */ }
+      }
       if (this.recorder && this.recorder.state !== 'inactive') this.recorder.stop();
       if (this.stream) this.stream.getTracks().forEach(t => t.stop());
     } catch(e) { /* ignore */ }
@@ -928,8 +953,8 @@ class VideoMonitor {
 async function promptWebcam() {
   const vsCpu = S.game?.is_vs_cpu;
   const body = vsCpu
-    ? `Recording helps approve your win. For vs-computer games, only your side needs usable video on file. If it is missing or unclear, the payout may be denied. (₹${S.game.bet_amount} table)`
-    : `Multiplayer: reviewers need usable video from both you and your opponent on the server before a win can be paid. Turn your camera on; one continuous clip uploads when the game ends or you stop the camera. If either side has no usable recording, payouts may be denied. (₹${S.game.bet_amount} table)`;
+    ? `Recording helps approve your win. Video is uploaded in ~15 second segments during the game (so reviewers see the full session, not just the last few seconds). For vs-CPU, only your side needs usable video on file. (₹${S.game.bet_amount} table)`
+    : `Multiplayer: reviewers need usable video from both players. The camera uploads ~15 second segments throughout the game so the recording length matches real play time. If either side has no usable recording, payouts may be denied. (₹${S.game.bet_amount} table)`;
   const confirmed = await Modal.show(
     '📹',
     'Webcam & prize review',
