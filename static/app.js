@@ -47,17 +47,38 @@ const PIECE_NAMES = {
 //  API Layer
 // ════════════════════════════════════════════════════════════════════════════
 const API = {
-  async req(method, path, body, isForm = false) {
+  // All API calls share a hard timeout so a stuck/cold-starting backend never
+  // hangs the UI forever (e.g. resign sitting on "Resigning…").
+  async req(method, path, body, isForm = false, timeoutMs = 12000) {
     const headers = {};
     if (S.token) headers['Authorization'] = `Bearer ${S.token}`;
     if (body && !isForm) headers['Content-Type'] = 'application/json';
-    const res = await fetch(BASE + path, {
-      method,
-      headers,
-      body: isForm ? body : (body ? JSON.stringify(body) : undefined),
-    });
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort(), timeoutMs);
+    let res;
+    try {
+      res = await fetch(BASE + path, {
+        method,
+        headers,
+        body: isForm ? body : (body ? JSON.stringify(body) : undefined),
+        signal: ctrl.signal,
+      });
+    } catch (e) {
+      clearTimeout(t);
+      if (e && e.name === 'AbortError') {
+        throw new Error('Server did not respond in time. Please try again.');
+      }
+      throw new Error(e?.message || 'Network error — check your connection.');
+    }
+    clearTimeout(t);
     const data = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`);
+    if (!res.ok) {
+      const det = data.detail;
+      const msg = typeof det === 'string' ? det
+        : Array.isArray(det) ? det.map((x) => x.msg || JSON.stringify(x)).join('; ')
+        : `HTTP ${res.status}`;
+      throw new Error(msg);
+    }
     return data;
   },
   get:    (p)       => API.req('GET',    p),
@@ -86,25 +107,12 @@ const API = {
   getGame:         (id)     => API.get(`/games/${id}`),
   joinGame:        (id)     => API.post(`/games/${id}/join`),
   cancelGame:      (id)     => API.post(`/games/${id}/cancel`, {}),
-  makeMove:        async (id, mv) => {
-    const headers = { 'Content-Type': 'application/json' };
-    if (S.token) headers['Authorization'] = `Bearer ${S.token}`;
-    const res = await fetch(BASE + `/games/${id}/move`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({ move: mv, client_timestamp: Date.now() }),
-    });
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok) {
-      const det = data.detail;
-      const msg = typeof det === 'string' ? det
-        : Array.isArray(det) ? det.map((x) => x.msg || JSON.stringify(x)).join('; ')
-        : `HTTP ${res.status}`;
-      throw new Error(msg);
-    }
-    return data;
-  },
-  resign:          (id)     => API.post(`/games/${id}/resign`),
+  makeMove:        (id, mv) => API.req(
+    'POST', `/games/${id}/move`,
+    { move: mv, client_timestamp: Date.now() },
+    false, 15000,
+  ),
+  resign:          (id)     => API.req('POST', `/games/${id}/resign`, undefined, false, 8000),
   getUser:         (id)     => API.get(`/users/${id}`),
   myFlags:         ()       => API.get('/users/me/flags'),
   reportNoCamera:  (id, reason) => {
@@ -427,20 +435,27 @@ async function sendMove(move) {
   S.lastTo      = to;
   optimisticMovePiece(from, to);
 
-  // Safety: if the server never acks (network drop, etc.), release the lock
-  // after 15s (CPU "thinks" up to a couple seconds + network).
+  // Optimistically hand the clock to the opponent so their timer starts
+  // ticking right away. The next authoritative server message will overwrite.
+  try {
+    const myColLetter = S.myColor === 'white' ? 'w' : (S.myColor === 'black' ? 'b' : null);
+    if (myColLetter) {
+      S.clock.turn = myColLetter === 'w' ? 'b' : 'w';
+      S.clock.syncAt = Date.now();
+      updateClockDisplay();
+    }
+  } catch (_e) { /* visual only */ }
+
+  // Safety: if no ack within 12s, *re-sync from the server* (don't blindly
+  // re-send — re-sending caused the spurious "Not your turn" 400s when the
+  // first attempt actually got through over WS).
   if (S.movePendingTimer) clearTimeout(S.movePendingTimer);
   S.movePendingTimer = setTimeout(async () => {
     if (!S.movePending) return;
-    // Don't just warn — actually try REST so the game can progress.
-    try {
-      await sendMoveViaREST(move);
-    } catch (_e) {
-      clearMoveLock();
-      if (S.game) renderBoard(S.game.fen);
-      Toast.warn('Server is slow — please try the move again.');
-    }
-  }, 15000);
+    clearMoveLock();
+    try { await refreshGame(); } catch (_e) { /* ignore */ }
+    Toast.warn('Server was slow — board re-synced. Try again if needed.');
+  }, 12000);
 
   if (S.ws && S.ws.readyState === WebSocket.OPEN) {
     try {
@@ -1687,6 +1702,13 @@ document.addEventListener('DOMContentLoaded', async () => {
   });
 
   // ── Resign ──
+  // Design notes:
+  //  • The user just wants out — never get stuck on "Resigning…".
+  //  • We show the result UI IMMEDIATELY on confirm so the player can leave.
+  //  • The actual POST /resign runs in the background with a hard timeout.
+  //  • If the request times out or fails, we toast a warning but still let
+  //    the player return to the lobby — server will reconcile on next visit
+  //    (or admin can settle).
   document.getElementById('resign-btn').addEventListener('click', async () => {
     if (!S.game || S.game.status !== 'active') return;
 
@@ -1699,39 +1721,36 @@ document.addEventListener('DOMContentLoaded', async () => {
       'Yes, I resign', 'Keep playing');
     if (!ok) return;
 
-    // Lock UI and stop accepting moves while we resign.
     clearMoveLock();
-    const btn = document.getElementById('resign-btn');
-    if (btn) { btn.disabled = true; btn.textContent = 'Resigning…'; }
-
-    // The WS will receive the broadcast game_over too, but we don't depend on
-    // it: REST is the authoritative path. Suppress auto-reconnect because the
-    // game is ending.
     closeWS({ manual: true });
-
+    const gameId = S.game.id;
     const winner = S.myColor === 'white' ? 'black' : 'white';
-    const finishResignUI = async () => {
-      try { await refreshGame(); } catch (_e) { /* ignore */ }
-      showResult(winner, 'resignation');
-    };
 
-    try {
-      await API.resign(S.game.id);
-      await finishResignUI();
-    } catch (e) {
-      const msg = String(e?.message || '').toLowerCase();
-      // "Game is not active." → already ended somehow (race, opponent flag,
-      // already resigned). Show the result either way so the player isn't
-      // stranded on a frozen board.
-      if (msg.includes('not active') || msg.includes('completed') || msg.includes('finished')) {
-        await finishResignUI();
-      } else {
-        Toast.err(e.message || 'Could not resign — please try again.');
-        if (btn) { btn.disabled = false; btn.textContent = '🏳️ Resign'; }
-        // Try to bring the live channel back if the resign failed.
-        if (S.game && S.game.status === 'active' && S.token) connectWS(S.game.id);
+    // 1) Reflect resignation in the UI right now. The player is done.
+    if (S.game) S.game.status = 'completed';
+    stopClockTicker();
+    showResult(winner, 'resignation');
+
+    // 2) Fire the REST resign in the background; never let it block the UI.
+    (async () => {
+      try {
+        await API.resign(gameId);
+      } catch (e) {
+        const msg = String(e?.message || '').toLowerCase();
+        if (msg.includes('not active') || msg.includes('completed') || msg.includes('finished')) {
+          return; // already ended on the server — fine
+        }
+        // Surface the problem but DO NOT undo the UI; the player has moved on.
+        Toast.warn(
+          'Resignation could not be confirmed with the server right now — ' +
+          'it will be retried automatically. You can safely leave.'
+        );
+        // Retry once after a short backoff in case the server was restarting.
+        setTimeout(() => {
+          API.resign(gameId).catch(() => {});
+        }, 3000);
       }
-    }
+    })();
   });
 
   // ── Wallet quick chips (pre-fill amount and generate QR) ──

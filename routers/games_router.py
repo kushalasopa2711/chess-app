@@ -16,7 +16,7 @@ import logging
 from datetime import datetime, timedelta
 from typing import Optional
 
-CPU_MOVE_DELAY_SEC = 0.6
+CPU_MOVE_DELAY_SEC = 0.2
 
 import chess
 import chess.pgn
