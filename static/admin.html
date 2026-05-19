@@ -131,13 +131,39 @@
   .search-input:focus { border-color: #6C63FF; }
 
   /* ── Table ── */
-  .table-wrap { background: #1E2235; border: 1px solid #2D3555; border-radius: 14px; overflow: hidden; }
+  .table-wrap {
+    background: #1E2235; border: 1px solid #2D3555; border-radius: 14px;
+    overflow-x: auto; overflow-y: visible;
+    -webkit-overflow-scrolling: touch;
+  }
   table { width: 100%; border-collapse: collapse; font-size: 14px; }
   thead { background: #252A40; }
   th { padding: 13px 16px; text-align: left; font-size: 12px; font-weight: 800;
-       text-transform: uppercase; letter-spacing: .6px; color: #7B8CB8; }
+       text-transform: uppercase; letter-spacing: .6px; color: #7B8CB8; white-space: nowrap; }
   td { padding: 13px 16px; border-top: 1px solid #252A40; vertical-align: middle; }
   tr:hover td { background: #252A40; }
+
+  /* Users table — wide layout with sticky actions column */
+  .users-table { min-width: 1040px; }
+  .users-table th,
+  .users-table td { padding: 10px 12px; }
+  .users-table .col-id { width: 52px; color: #7B8CB8; font-size: 12px; }
+  .users-table .col-user { min-width: 100px; }
+  .users-table .col-email {
+    max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    font-size: 13px; color: #A0A8CC;
+  }
+  .users-table .col-num { text-align: center; white-space: nowrap; width: 1%; }
+  .users-table .col-money { white-space: nowrap; }
+  .users-table .col-status { white-space: nowrap; }
+  .users-table th.col-actions,
+  .users-table td.col-actions {
+    position: sticky; right: 0; z-index: 2;
+    min-width: 248px; background: #1E2235;
+    box-shadow: -10px 0 18px rgba(0, 0, 0, 0.35);
+  }
+  .users-table thead th.col-actions { background: #252A40; z-index: 3; }
+  .users-table tr:hover td.col-actions { background: #252A40; }
 
   /* ── Badges ── */
   .badge {
@@ -154,11 +180,13 @@
   .act-btn {
     padding: 5px 12px; border-radius: 6px; cursor: pointer;
     font-family: 'Nunito', sans-serif; font-size: 12px; font-weight: 800; border: none;
-    transition: filter .15s;
+    transition: filter .15s; white-space: nowrap; flex-shrink: 0;
   }
   .act-btn:hover { filter: brightness(1.15); }
-  .user-actions { display: flex; flex-direction: column; gap: 6px; align-items: flex-start; max-width: 280px; }
-  .user-actions-row { display: flex; flex-wrap: wrap; gap: 5px; align-items: center; }
+  .user-actions {
+    display: flex; flex-wrap: wrap; gap: 6px; align-items: center;
+    justify-content: flex-end; min-width: 230px;
+  }
   .act-btn.act-del { background: #5C2B29 !important; border: 1px solid #FF5252 !important; color: #FFCDD2 !important; font-weight: 700; }
   .act-add    { background: rgba(67,197,158,.2);  color: #43C59E; }
   .act-deduct { background: rgba(255,82,82,.2);   color: #FF5252; }
@@ -221,6 +249,9 @@
   }
 
   /* ── Pagination ── */
+  .table-hint {
+    margin: 10px 4px 0; font-size: 12px; color: #4A5280; font-weight: 600;
+  }
   .pagination { display: flex; align-items: center; justify-content: center; gap: 10px; margin-top: 16px; }
   .pg-btn {
     padding: 7px 16px; background: #1E2235; border: 1px solid #2D3555;
@@ -376,16 +407,25 @@
         <input class="search-input" type="text" id="user-search" placeholder="🔍 Search username or email…" oninput="searchUsers()" />
       </div>
       <div class="table-wrap">
-        <table>
+        <table class="users-table">
           <thead>
             <tr>
-              <th>ID</th><th>Username</th><th>Email</th><th>Balance</th>
-              <th>Locked</th><th>Games</th><th>Wins</th><th>Flags</th><th>Status</th><th>Actions</th>
+              <th class="col-id">ID</th>
+              <th class="col-user">Username</th>
+              <th class="col-email">Email</th>
+              <th class="col-money">Balance</th>
+              <th class="col-money">Locked</th>
+              <th class="col-num">Games</th>
+              <th class="col-num">Wins</th>
+              <th class="col-num">Flags</th>
+              <th class="col-status">Status</th>
+              <th class="col-actions">Actions</th>
             </tr>
           </thead>
           <tbody id="users-body"><tr><td colspan="10" class="empty">Loading…</td></tr></tbody>
         </table>
       </div>
+      <p class="table-hint" id="users-table-hint">Tip: scroll horizontally if your window is narrow — action buttons stay pinned on the right.</p>
       <div class="pagination" id="users-pg"></div>
     </section>
 
@@ -796,32 +836,30 @@ async function loadUsers(page = _page_users) {
       tbody.innerHTML = d.users.map(u => {
         const jn = JSON.stringify(u.username);
         return `<tr>
-          <td style="color:#7B8CB8;font-size:12px">#${u.id}</td>
-          <td><strong style="color:#fff">${esc(u.username)}</strong></td>
-          <td style="font-size:13px;color:#A0A8CC">${esc(u.email)}</td>
-          <td><strong style="color:#43C59E">₹${u.balance.toFixed(2)}</strong></td>
-          <td style="color:#7B8CB8">₹${u.locked.toFixed(2)}</td>
-          <td style="color:#A0A8CC">${u.games_played}</td>
-          <td style="color:#FFD600">${u.games_won}</td>
-          <td>${u.flag_count > 0
+          <td class="col-id">#${u.id}</td>
+          <td class="col-user"><strong style="color:#fff">${esc(u.username)}</strong></td>
+          <td class="col-email" title="${esc(u.email)}">${esc(u.email)}</td>
+          <td class="col-money"><strong style="color:#43C59E">₹${u.balance.toFixed(2)}</strong></td>
+          <td class="col-money" style="color:#7B8CB8">₹${u.locked.toFixed(2)}</td>
+          <td class="col-num" style="color:#A0A8CC">${u.games_played}</td>
+          <td class="col-num" style="color:#FFD600">${u.games_won}</td>
+          <td class="col-num">${u.flag_count > 0
             ? `<span class="badge ${u.flag_count >= 3 ? 'badge-red' : 'badge-yellow'}">${u.flag_count}</span>`
             : `<span class="badge badge-gray">0</span>`}
           </td>
-          <td>${u.is_banned
+          <td class="col-status">${u.is_banned
             ? `<span class="badge badge-red">Banned</span>`
             : `<span class="badge badge-green">Active</span>`}
           </td>
-          <td>
+          <td class="col-actions">
             <div class="user-actions">
-              <div class="user-actions-row">
-                <button type="button" class="act-btn act-add" onclick='addFunds(${u.id}, ${jn})'>+ Funds</button>
-                <button type="button" class="act-btn act-deduct" onclick='deductFunds(${u.id}, ${jn})'>- Funds</button>
-                ${u.is_banned
-                  ? `<button type="button" class="act-btn act-unban" onclick='unbanUser(${u.id}, ${jn})'>Unban</button>`
-                  : `<button type="button" class="act-btn act-ban" onclick='banUser(${u.id}, ${jn})'>Ban</button>`
-                }
-              </div>
-              <button type="button" class="act-btn act-del" onclick='deleteUser(${u.id}, ${jn})'>🗑 Remove account</button>
+              <button type="button" class="act-btn act-add" title="Credit wallet" onclick='addFunds(${u.id}, ${jn})'>+ Credit</button>
+              <button type="button" class="act-btn act-deduct" title="Deduct from wallet" onclick='deductFunds(${u.id}, ${jn})'>− Debit</button>
+              ${u.is_banned
+                ? `<button type="button" class="act-btn act-unban" title="Restore account" onclick='unbanUser(${u.id}, ${jn})'>Unban</button>`
+                : `<button type="button" class="act-btn act-ban" title="Suspend account" onclick='banUser(${u.id}, ${jn})'>Ban</button>`
+              }
+              <button type="button" class="act-btn act-del" title="Permanently delete account" onclick='deleteUser(${u.id}, ${jn})'>🗑 Remove</button>
             </div>
           </td>
         </tr>`;
