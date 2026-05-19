@@ -33,6 +33,8 @@ const S = {
   clock:      { whiteMs: 0, blackMs: 0, turn: 'w', syncAt: 0 },
   movePending: false,     // true while a sent move awaits server confirmation
   movePendingTimer: null, // safety timeout to release the lock if WS hiccups
+  userWs:     null,       // per-user notification WebSocket
+  userWsReconnectTimer: null,
 };
 
 // ── Piece unicode map ────────────────────────────────────────────────────────
@@ -1564,6 +1566,7 @@ function afterLogin(token, user) {
   localStorage.setItem('cw_token', token);
   document.getElementById('nav-avatar').textContent = user.username[0].toUpperCase();
   document.getElementById('navbar').classList.add('visible');
+  connectUserWS();
   showView('lobby');
   loadLobby();
 }
@@ -1572,10 +1575,107 @@ function logout() {
   S.token = S.user = S.game = S.wallet = null;
   stopClockTicker();
   closeWS({ manual: true });
+  closeUserWS();
   if (S.video) { S.video.stop(); S.video = null; }
   localStorage.removeItem('cw_token');
   document.getElementById('navbar').classList.remove('visible');
   showView('landing');
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+//  Per-user notification WebSocket (account-wide events)
+// ════════════════════════════════════════════════════════════════════════════
+function closeUserWS() {
+  if (S.userWsReconnectTimer) {
+    clearTimeout(S.userWsReconnectTimer);
+    S.userWsReconnectTimer = null;
+  }
+  if (S.userWs) {
+    try { S.userWs.onclose = null; S.userWs.close(); } catch (_e) { /* ignore */ }
+    S.userWs = null;
+  }
+}
+
+function connectUserWS() {
+  closeUserWS();
+  if (!S.token) return;
+  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+  const url = `${proto}://${location.host}/users/me/ws?token=${encodeURIComponent(S.token)}`;
+  let ws;
+  try {
+    ws = new WebSocket(url);
+  } catch (_e) {
+    return;
+  }
+  S.userWs = ws;
+  ws.onmessage = (ev) => {
+    let msg;
+    try { msg = JSON.parse(ev.data); } catch (_e) { return; }
+    handleUserWSMessage(msg);
+  };
+  ws.onclose = () => {
+    if (!S.token) return;          // user logged out — don't reconnect
+    if (S.userWsReconnectTimer) return;
+    S.userWsReconnectTimer = setTimeout(() => {
+      S.userWsReconnectTimer = null;
+      connectUserWS();
+    }, 4000);
+  };
+  ws.onerror = () => { /* let onclose handle reconnect */ };
+}
+
+function handleUserWSMessage(msg) {
+  if (!msg || !msg.type) return;
+  const data = msg.data || {};
+  // Update nav balance immediately on any balance-bearing event.
+  if (typeof data.balance === 'number') {
+    const navEl = document.getElementById('nav-balance');
+    if (navEl) navEl.textContent = `₹${Number(data.balance).toFixed(2)}`;
+    if (S.wallet) S.wallet.balance = data.balance;
+    const wBal = document.getElementById('w-balance');
+    if (wBal) wBal.textContent = `₹${Number(data.balance).toFixed(2)}`;
+    const lsBal = document.getElementById('ls-balance');
+    if (lsBal) lsBal.textContent = `₹${Number(data.balance).toFixed(2)}`;
+  }
+  switch (msg.type) {
+    case 'ready':
+    case 'ping':
+    case 'pong':
+      return;
+    case 'wallet_update':
+      Toast.ok(data.reason || 'Your wallet was updated.');
+      break;
+    case 'deposit_approved':
+      Toast.ok(data.message || `Deposit of ₹${data.amount} approved! 🎉`);
+      break;
+    case 'deposit_rejected':
+      Toast.warn(data.message || 'Deposit request was declined.');
+      break;
+    case 'withdrawal_completed':
+      Toast.ok(data.message || 'Withdrawal paid out.');
+      break;
+    case 'withdrawal_rejected':
+      Toast.warn(data.message || 'Withdrawal cancelled and refunded.');
+      break;
+    case 'payout_approved':
+      Toast.ok(data.message || 'Winnings released to your wallet!');
+      break;
+    case 'payout_rejected':
+      Toast.err(data.message || 'Payout was declined.');
+      break;
+    case 'account_banned':
+      Toast.err(data.message || 'Your account has been suspended.');
+      break;
+    case 'account_unbanned':
+      Toast.ok(data.message || 'Your account has been reactivated.');
+      break;
+  }
+  // If the wallet view is currently active, do a full refresh so any
+  // related lists (deposits, withdrawals, payouts) reflect the change too.
+  const walletView = document.getElementById('view-wallet');
+  if (walletView && walletView.classList.contains('active') && typeof loadWallet === 'function') {
+    loadWallet();
+  }
 }
 
 // ════════════════════════════════════════════════════════════════════════════

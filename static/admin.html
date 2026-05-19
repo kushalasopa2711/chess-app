@@ -1388,6 +1388,7 @@ async function loadPayouts(status = 'pending') {
           <td>${p.status === 'pending' ? `
             <div style="display:flex;gap:4px;flex-wrap:wrap">
               <button class="act-btn act-add"  onclick="releasePayout(${p.id},'${esc(p.username)}',${p.net_amount})">✅ Release</button>
+              <button class="act-btn act-view" onclick="releasePayoutOverride(${p.id},'${esc(p.username)}',${p.net_amount})" title="Approve even when no video evidence is on file">⚠️ Approve w/o video</button>
               <button class="act-btn act-ban"  onclick="rejectPayout(${p.id},'${esc(p.username)}')">🚫 Reject</button>
             </div>` : '<span style="color:#4A5280">Done</span>'}
           </td>
@@ -1402,6 +1403,36 @@ async function releasePayout(id, uname, net) {
   try {
     const r = await post(`/admin/payouts/${id}/approve?admin_key=${ADMIN_KEY}`);
     toast(`✅ ₹${r.released} released to user #${r.user_id}`, 'ok');
+    loadPayouts('pending');
+  } catch(e) { toast(e.message, 'err'); }
+}
+
+async function releasePayoutOverride(id, uname, net) {
+  const banner =
+    `⚠️ APPROVE WITHOUT VIDEO — ₹${net} to ${uname}\n\n` +
+    `The player does NOT have the usual video evidence on file. ` +
+    `By default our policy is to deny payouts in this case, but you can still approve it manually.\n\n` +
+    `Type a short reason for the audit log (e.g. "manual ID check OK", "policy waiver", "vs CPU, recording lost"):`;
+  const reason = prompt(banner, '');
+  if (reason === null) return;                 // cancelled
+  const r2 = reason.trim();
+  if (r2.length < 4) {
+    alert('Reason must be at least 4 characters. Override aborted.');
+    return;
+  }
+  const confirmed = confirm(
+    `Confirm override:\n\n` +
+    `  Payout: #${id}\n  User:   ${uname}\n  Amount: ₹${net}\n  Reason: ${r2}\n\n` +
+    `Disclaimer: by default we do NOT pay out without usable video evidence. ` +
+    `This action bypasses that guard and will be logged on the payout record. Proceed?`
+  );
+  if (!confirmed) return;
+  try {
+    const url =
+      `/admin/payouts/${id}/approve?admin_key=${ADMIN_KEY}` +
+      `&override_video=true&override_reason=${encodeURIComponent(r2)}`;
+    const r = await post(url);
+    toast(`✅ ₹${r.released} released (override) to user #${r.user_id}`, 'ok');
     loadPayouts('pending');
   } catch(e) { toast(e.message, 'err'); }
 }

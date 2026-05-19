@@ -1,13 +1,19 @@
 """
 WebSocket connection manager.
 
-Enforces one connection per player per game to prevent multi-session cheating.
+Two channels are maintained:
+
+  - **Game rooms**: one connection per (game_id, user_id). Used for live move
+    broadcasts during play. Multi-tab is rejected (prevents multi-session
+    cheating).
+  - **User channels**: zero-or-more connections per user_id, used to push
+    account-wide notifications (wallet credits, withdrawal status changes,
+    payout approvals, etc.) so the UI updates without requiring a refresh.
 """
 from __future__ import annotations
 
-import json
 import logging
-from typing import Dict, Optional, Tuple
+from typing import Dict, List, Optional
 
 from fastapi import WebSocket
 
@@ -15,19 +21,16 @@ logger = logging.getLogger(__name__)
 
 # {game_id: {user_id: WebSocket}}
 _connections: Dict[int, Dict[int, WebSocket]] = {}
+# {user_id: [WebSocket, ...]}  — one user may have multiple tabs open.
+_user_channels: Dict[int, List[WebSocket]] = {}
 
 
 class ConnectionManager:
+    # ── Game-room channels ────────────────────────────────────────────────
     async def connect(
         self, websocket: WebSocket, game_id: int, user_id: int
     ) -> bool:
-        """
-        Accept a WebSocket. If the player already has a connection for this game,
-        close the old one first (prevents multi-tab cheating).
-        Returns True if connected, False if rejected.
-        """
         await websocket.accept()
-
         if game_id not in _connections:
             _connections[game_id] = {}
 
@@ -78,6 +81,38 @@ class ConnectionManager:
 
     def active_players_in_game(self, game_id: int) -> list[int]:
         return list(_connections.get(game_id, {}).keys())
+
+    # ── Per-user notification channels ────────────────────────────────────
+    async def connect_user(self, websocket: WebSocket, user_id: int) -> None:
+        await websocket.accept()
+        _user_channels.setdefault(user_id, []).append(websocket)
+        logger.info("User %d opened a notification channel (now %d open).",
+                    user_id, len(_user_channels[user_id]))
+
+    def disconnect_user(self, user_id: int, websocket: WebSocket) -> None:
+        channels = _user_channels.get(user_id, [])
+        if websocket in channels:
+            channels.remove(websocket)
+        if not channels:
+            _user_channels.pop(user_id, None)
+        logger.info("User %d closed a notification channel.", user_id)
+
+    async def push_to_user(self, user_id: int, message: dict) -> int:
+        """
+        Best-effort fan-out to every open tab/device for ``user_id``.
+        Returns the number of sockets the message reached. Failed sockets are
+        culled so the next push doesn't try them again.
+        """
+        channels = list(_user_channels.get(user_id, []))
+        delivered = 0
+        for ws in channels:
+            try:
+                await ws.send_json(message)
+                delivered += 1
+            except Exception as e:
+                logger.info("Pruning dead user channel for %d: %s", user_id, e)
+                self.disconnect_user(user_id, ws)
+        return delivered
 
 
 manager = ConnectionManager()

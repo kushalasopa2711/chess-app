@@ -34,6 +34,21 @@ from models import (
     WithdrawalRequest,
 )
 from video_evidence import payout_video_requirement_error, video_evidence_summary_for_admin
+from websocket_manager import manager
+
+
+async def _push_wallet_event(
+    user_id: int, event_type: str, *, balance: float | None = None, **payload
+) -> None:
+    """Best-effort fire-and-forget push to a user's notification socket(s)."""
+    data = dict(payload)
+    if balance is not None:
+        data.setdefault("balance", round(float(balance), 2))
+    try:
+        await manager.push_to_user(user_id, {"type": event_type, "data": data})
+    except Exception:
+        # Notifications are best-effort; never let a delivery hiccup break the admin action.
+        pass
 
 router = APIRouter(prefix="/admin", tags=["Admin"])
 VIDEOS_STORAGE_ROOT = Path("videos").resolve()
@@ -200,6 +215,11 @@ async def add_funds(
         description=f"Admin credit: {note}",
     ))
     await db.commit()
+    await _push_wallet_event(
+        user_id, "wallet_update",
+        balance=wallet.balance, delta=amount,
+        reason=f"Admin credit: {note}",
+    )
     return {"user_id": user_id, "new_balance": wallet.balance, "credited": amount}
 
 
@@ -228,6 +248,11 @@ async def deduct_funds(
         description=f"Admin deduction: {note}",
     ))
     await db.commit()
+    await _push_wallet_event(
+        user_id, "wallet_update",
+        balance=wallet.balance, delta=-deducted,
+        reason=f"Admin deduction: {note}",
+    )
     return {"user_id": user_id, "new_balance": wallet.balance, "deducted": deducted}
 
 
@@ -246,6 +271,10 @@ async def ban_user(
     user.is_banned = True
     user.ban_reason = reason
     await db.commit()
+    await _push_wallet_event(
+        user_id, "account_banned",
+        reason=reason, message=f"Your account has been suspended: {reason}",
+    )
     return {"user_id": user_id, "banned": True, "reason": reason}
 
 
@@ -263,6 +292,10 @@ async def unban_user(
     user.is_banned = False
     user.ban_reason = None
     await db.commit()
+    await _push_wallet_event(
+        user_id, "account_unbanned",
+        message="Your account has been reactivated. Welcome back!",
+    )
     return {"user_id": user_id, "banned": False}
 
 
@@ -708,6 +741,13 @@ async def approve_deposit(
         description=f"UPI Deposit approved – UTR {dep.utr_number}",
     ))
     await db.commit()
+    await _push_wallet_event(
+        dep.user_id, "deposit_approved",
+        balance=wallet.balance, delta=dep.amount,
+        deposit_id=dep.id,
+        amount=dep.amount,
+        message=f"Your deposit of ₹{dep.amount:.2f} has been approved!",
+    )
     return {"status": "approved", "credited": dep.amount, "user_id": dep.user_id}
 
 
@@ -729,6 +769,11 @@ async def reject_deposit(
     dep.reviewed_at = datetime.utcnow()
     dep.reviewed_by = "admin"
     await db.commit()
+    await _push_wallet_event(
+        dep.user_id, "deposit_rejected",
+        deposit_id=dep.id, reason=reason,
+        message=f"Your deposit request was declined: {reason}",
+    )
     return {"status": "rejected", "reason": reason}
 
 
@@ -782,9 +827,22 @@ async def list_payouts(
 async def approve_payout(
     payout_id: int,
     admin_key: str = Query(""),
+    override_video: bool = Query(
+        False,
+        description=(
+            "If true, bypass the video-evidence requirement. Admin asserts they "
+            "have reviewed any available evidence (or none is required by the "
+            "operator's policy). The override + reason are stored on the payout "
+            "for audit."
+        ),
+    ),
+    override_reason: str = Query(
+        "",
+        description="Required when override_video is true — must be at least 4 chars.",
+    ),
     db: AsyncSession = Depends(get_db),
 ):
-    """Release winnings to the player after video review passes."""
+    """Release winnings to the player. Optionally bypass the video requirement."""
     _auth(admin_key)
     pay_r = await db.execute(select(PendingPayout).where(PendingPayout.id == payout_id))
     pay = pay_r.scalar_one_or_none()
@@ -795,10 +853,26 @@ async def approve_payout(
 
     game_r = await db.execute(select(Game).where(Game.id == pay.game_id))
     game = game_r.scalar_one_or_none()
+    used_override = False
     if game:
         block = await payout_video_requirement_error(db, game)
         if block:
-            raise HTTPException(status_code=400, detail=block)
+            if not override_video:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        block
+                        + " You can override this guard by passing override_video=true with a reason — "
+                          "the payout will be approved and the bypass logged."
+                    ),
+                )
+            reason = (override_reason or "").strip()
+            if len(reason) < 4:
+                raise HTTPException(
+                    status_code=400,
+                    detail="override_reason must be at least 4 characters when bypassing the video guard.",
+                )
+            used_override = True
 
     wallet_r = await db.execute(select(Wallet).where(Wallet.user_id == pay.user_id))
     wallet = wallet_r.scalar_one_or_none()
@@ -812,15 +886,37 @@ async def approve_payout(
     user.total_earned = round(user.total_earned + pay.net_amount, 2)
     pay.status = "approved"
     pay.reviewed_at = datetime.utcnow()
-    pay.reviewed_by = "admin"
+    if used_override:
+        pay.reviewed_by = f"admin (override: {override_reason.strip()[:200]})"
+    else:
+        pay.reviewed_by = "admin"
 
+    txn_desc = f"Winnings released – Game #{pay.game_id} (fee ₹{pay.platform_fee})"
+    if used_override:
+        txn_desc += " [admin override, no video evidence]"
     db.add(Transaction(
         user_id=pay.user_id, amount=pay.net_amount,
         type=TransactionType.WIN, game_id=pay.game_id,
-        description=f"Winnings released – Game #{pay.game_id} (fee ₹{pay.platform_fee})",
+        description=txn_desc,
     ))
     await db.commit()
-    return {"status": "approved", "released": pay.net_amount, "user_id": pay.user_id}
+    await _push_wallet_event(
+        pay.user_id, "payout_approved",
+        balance=wallet.balance, delta=pay.net_amount,
+        payout_id=pay.id, game_id=pay.game_id,
+        amount=pay.net_amount,
+        override=used_override,
+        message=(
+            f"Your ₹{pay.net_amount:.2f} winnings for Game #{pay.game_id} have been released!"
+            + (" (Approved via admin override — no video evidence on file.)" if used_override else "")
+        ),
+    )
+    return {
+        "status": "approved",
+        "released": pay.net_amount,
+        "user_id": pay.user_id,
+        "override_used": used_override,
+    }
 
 
 @router.post("/payouts/{payout_id}/reject")
@@ -879,6 +975,27 @@ async def reject_payout(
         account_banned=ban, reason=reason, reviewed_by="admin",
     ))
     await db.commit()
+    final_balance = wallet.balance if wallet else None
+    await _push_wallet_event(
+        pay.user_id, "payout_rejected",
+        balance=final_balance,
+        delta=(-actual_penalty if actual_penalty > 0 else 0),
+        payout_id=pay.id, game_id=pay.game_id,
+        withheld=pay.net_amount,
+        penalty=actual_penalty,
+        banned=ban,
+        reason=reason,
+        message=(
+            f"Payout for Game #{pay.game_id} was declined: {reason}"
+            + (f" Penalty of ₹{actual_penalty:.2f} also applied." if actual_penalty > 0 else "")
+        ),
+    )
+    if ban:
+        await _push_wallet_event(
+            pay.user_id, "account_banned",
+            reason=user.ban_reason or reason,
+            message="Your account has been suspended pending review.",
+        )
     return {
         "status": "rejected",
         "payout_withheld": pay.net_amount,
@@ -947,6 +1064,13 @@ async def complete_withdrawal(
     wr.reviewed_at = datetime.utcnow()
     wr.reviewed_by = "admin"
     await db.commit()
+    await _push_wallet_event(
+        wr.user_id, "withdrawal_completed",
+        withdrawal_id=wr.id,
+        amount=wr.amount,
+        destination_upi=wr.destination_upi,
+        message=f"₹{wr.amount:.2f} sent to {wr.destination_upi}.",
+    )
     return {"status": "completed", "id": wr.id}
 
 
@@ -988,6 +1112,14 @@ async def reject_withdrawal(
         )
     )
     await db.commit()
+    await _push_wallet_event(
+        wr.user_id, "withdrawal_rejected",
+        balance=wallet.balance, delta=wr.amount,
+        withdrawal_id=wr.id,
+        amount=wr.amount,
+        reason=reason,
+        message=f"Withdrawal cancelled — ₹{wr.amount:.2f} refunded to your wallet. ({reason})",
+    )
     return {"status": "rejected", "refunded": wr.amount, "user_id": wr.user_id}
 
 
