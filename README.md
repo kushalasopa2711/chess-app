@@ -54,12 +54,59 @@ Interactive API docs: **http://localhost:8000/docs**
 
 | Variable | Default | Description |
 |---|---|---|
-| `SECRET_KEY` | dev key | JWT signing secret (change in production!) |
+| `ENV` | `development` | Set to `production` on live servers — enables strict secret validation. |
+| `SECRET_KEY` | random (dev) | JWT signing secret. **Must be ≥ 32 chars in production**, otherwise app refuses to boot. |
 | `ALGORITHM` | `HS256` | JWT algorithm |
 | `ACCESS_TOKEN_EXPIRE_MINUTES` | `60` | Token lifetime |
-| `DATABASE_URL` | SQLite local | SQLAlchemy async DB URL |
-| `MAX_INVESTMENT_RUPEES` | `100` | Hard cap on wallet balance and total bets |
+| `DATABASE_URL` | SQLite local | SQLAlchemy async DB URL. Accepts `postgres://`, `postgresql://`, or `postgresql+asyncpg://` — auto-normalised. |
+| `DATABASE_SSL` | unset | Set to `require` to force SSL on managed Postgres providers. |
+| `ALLOWED_ORIGINS` | `*` | Comma-separated CORS allow-list. Set explicitly in production. |
+| `ADMIN_SECRET` | dev value | Admin dashboard secret. **Must be ≥16 chars and non-default in production**. |
+| `MAX_WALLET_BALANCE` | `100` | Hard cap on wallet balance |
+| `MIN_BET` / `MAX_BET` | `10` / `100` | Stake bounds |
 | `MIN_MOVE_TIME_MS` | `500` | Minimum milliseconds between moves |
+| `UPI_ID` / `UPI_NAME` / `UPI_NOTE` | dev defaults | Your real UPI payee details — used for deposit QR generation. |
+
+---
+
+## Production deployment
+
+The repo ships a `Procfile` and `render.yaml` so you can deploy on Render (or any Heroku-style platform) without further changes.
+
+### Render (recommended)
+
+1. Push the repo to GitHub.
+2. In Render → New + Blueprint → point at the repo. Render reads `render.yaml`:
+   - Creates a managed Postgres database (`chesswager-db`).
+   - Wires `DATABASE_URL` into the web service automatically.
+   - Auto-generates `SECRET_KEY`.
+3. In the dashboard set the *manual* env vars: `ADMIN_SECRET`, `ALLOWED_ORIGINS`, `UPI_ID`, `UPI_NAME`.
+4. First deploy will run `gunicorn -k uvicorn.workers.UvicornWorker main:app` with two workers.
+5. Open `/health` → expect `{"status":"ok","env":"production"}`.
+
+### Any other host
+
+Required env vars: `ENV=production`, `SECRET_KEY` (≥32 chars), `ADMIN_SECRET` (≥16 chars, non-default), `DATABASE_URL` (Postgres recommended), `ALLOWED_ORIGINS`.
+
+Start command:
+
+```bash
+gunicorn -k uvicorn.workers.UvicornWorker main:app --bind 0.0.0.0:$PORT --workers 2 --timeout 60 --keep-alive 30
+```
+
+### Database — Postgres
+
+The async engine uses **asyncpg**. Any of these URL forms is accepted:
+
+```
+postgres://user:pass@host:5432/dbname
+postgresql://user:pass@host:5432/dbname
+postgresql+asyncpg://user:pass@host:5432/dbname
+```
+
+Tables are created on first boot via `create_all`. Subsequent column additions are applied by `_upgrade_schema_sync` (idempotent `ALTER TABLE ... ADD COLUMN IF NOT EXISTS`). No Alembic migration is required for the current schema.
+
+On Render's managed Postgres, set `DATABASE_SSL=require` (the bundled `render.yaml` already does this).
 
 ---
 

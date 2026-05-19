@@ -1,0 +1,38 @@
+services:
+  - type: web
+    name: chesswager
+    env: python
+    plan: starter
+    buildCommand: pip install --upgrade pip && pip install -r requirements.txt
+    startCommand: gunicorn -k uvicorn.workers.UvicornWorker main:app --bind 0.0.0.0:$PORT --workers 2 --timeout 60 --graceful-timeout 30 --keep-alive 30
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: ENV
+        value: production
+      - key: PYTHON_VERSION
+        value: 3.12.6
+      - key: SECRET_KEY
+        generateValue: true
+      - key: ADMIN_SECRET
+        sync: false             # set manually in the Render dashboard
+      - key: DATABASE_URL
+        fromDatabase:
+          name: chesswager-db
+          property: connectionString
+      - key: DATABASE_SSL
+        value: require
+      - key: ALLOWED_ORIGINS
+        sync: false             # e.g. https://chesswager.example.com
+      - key: UPI_ID
+        sync: false
+      - key: UPI_NAME
+        sync: false
+      - key: WEB_CONCURRENCY
+        value: "2"
+
+databases:
+  - name: chesswager-db
+    plan: starter
+    databaseName: chesswager
+    user: chesswager

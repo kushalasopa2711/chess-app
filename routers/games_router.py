@@ -567,6 +567,38 @@ async def create_game(
     return game
 
 
+@router.get("/{game_id}/legal-moves")
+async def list_legal_moves(
+    game_id: int,
+    from_sq: str = Query(..., alias="from", min_length=2, max_length=2),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Return the legal destination squares for the piece on ``from`` in the
+    current position. Used by the UI to highlight valid targets so players
+    cannot click an illegal square by accident.
+    """
+    game = await _get_game_or_404(game_id, db)
+    if game.status != GameStatus.ACTIVE:
+        return {"from": from_sq, "to": [], "turn": None}
+
+    board = _board_from_game(game)
+    try:
+        sq_index = chess.parse_square(from_sq.lower())
+    except (ValueError, AttributeError):
+        return {"from": from_sq, "to": [], "turn": "w" if board.turn == chess.WHITE else "b"}
+
+    targets: list[str] = []
+    for mv in board.legal_moves:
+        if mv.from_square == sq_index:
+            targets.append(chess.square_name(mv.to_square))
+    return {
+        "from": from_sq,
+        "to": targets,
+        "turn": "w" if board.turn == chess.WHITE else "b",
+    }
+
+
 @router.get("/{game_id}", response_model=GameDetail)
 async def get_game(game_id: int, db: AsyncSession = Depends(get_db)):
     """Get full game state including move history."""

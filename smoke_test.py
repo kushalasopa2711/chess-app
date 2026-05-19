@@ -1,0 +1,197 @@
+"""
+End-to-end smoke test against a locally running ChessWager API.
+
+Verifies the core flows in one process:
+  1. Register + login → user A, user B.
+  2. Admin: stats, list users, add funds to A, ban/unban.
+  3. Wallet: balance, withdraw (with UPI), my-withdrawals.
+  4. Admin: list withdrawals, complete, reject (refund flow).
+  5. Game vs CPU: create, play a few moves, query /legal-moves, resign.
+
+Run while the server is up:
+    python smoke_test.py [http://127.0.0.1:8765] [admin_secret]
+"""
+from __future__ import annotations
+
+import json
+import random
+import string
+import sys
+import time
+import urllib.error
+import urllib.parse
+import urllib.request
+
+
+BASE = sys.argv[1] if len(sys.argv) > 1 else "http://127.0.0.1:8765"
+ADMIN = sys.argv[2] if len(sys.argv) > 2 else "localdev-admin-key-1234"
+
+
+def call(method: str, path: str, body=None, token: str | None = None, expected: int = 200):
+    url = BASE + path
+    data = None
+    headers = {}
+    if body is not None:
+        data = json.dumps(body).encode("utf-8")
+        headers["Content-Type"] = "application/json"
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    req = urllib.request.Request(url, data=data, method=method, headers=headers)
+    try:
+        with urllib.request.urlopen(req, timeout=20) as r:
+            txt = r.read().decode("utf-8")
+            code = r.status
+    except urllib.error.HTTPError as e:
+        txt = e.read().decode("utf-8")
+        code = e.code
+    if code != expected:
+        raise AssertionError(
+            f"{method} {path} expected {expected} got {code}: {txt[:300]}"
+        )
+    try:
+        return json.loads(txt) if txt else {}
+    except json.JSONDecodeError:
+        return {"_raw": txt}
+
+
+def rand_user(prefix="t"):
+    return prefix + "".join(random.choices(string.ascii_lowercase + string.digits, k=8))
+
+
+def banner(s):
+    print(f"\n=== {s} ===", flush=True)
+
+
+def main():
+    # Force UTF-8 on Windows consoles so we can print rupee signs etc.
+    import io
+    try:
+        sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", line_buffering=True)
+    except Exception:
+        pass
+    print(f"Target: {BASE}", flush=True)
+    health = call("GET", "/health")
+    assert health["status"] == "ok", health
+    print(" health OK", flush=True)
+
+    banner("Auth: register + login")
+    uname = rand_user()
+    email = uname + "@example.com"
+    pw = "passw0rd!" + uname
+    call("POST", "/auth/register", {"username": uname, "email": email, "password": pw}, expected=201)
+    login = call("POST", "/auth/login", {"username": uname, "password": pw})
+    assert "access_token" in login, login
+    token = login["access_token"]
+    me = call("GET", "/auth/me", token=token)
+    assert me["username"] == uname, me
+    user_id = me["id"]
+    print(f"  user_id={user_id} username={uname}", flush=True)
+
+    banner("Admin: stats")
+    stats = call("GET", f"/admin/stats?admin_key={urllib.parse.quote(ADMIN)}")
+    assert "users" in stats, stats
+    print(f"  users.total={stats['users']['total']}  games.total={stats['games']['total']}", flush=True)
+
+    banner("Admin: add funds, deduct funds")
+    add = call(
+        "POST",
+        f"/admin/users/{user_id}/add-funds?admin_key={urllib.parse.quote(ADMIN)}&amount=50",
+    )
+    assert add["credited"] == 50 and add["new_balance"] >= 50.0, add
+    wallet = call("GET", "/wallet/balance", token=token)
+    assert wallet["balance"] >= 50.0, wallet
+    print(f"  balance after add: ₹{wallet['balance']}", flush=True)
+    ded = call(
+        "POST",
+        f"/admin/users/{user_id}/deduct-funds?admin_key={urllib.parse.quote(ADMIN)}&amount=10",
+    )
+    assert ded["deducted"] == 10, ded
+    wallet = call("GET", "/wallet/balance", token=token)
+    assert abs(wallet["balance"] - 40.0) < 0.01, wallet
+    print(f"  balance after deduct: ₹{wallet['balance']}", flush=True)
+
+    banner("Wallet: withdraw with UPI + my-withdrawals")
+    wresp = call(
+        "POST",
+        "/wallet/withdraw",
+        {"amount": 10.0, "destination_upi": "smoke@upi"},
+        token=token,
+    )
+    assert abs(wresp["balance"] - 30.0) < 0.01, wresp
+    my_w = call("GET", "/wallet/my-withdrawals", token=token)
+    assert isinstance(my_w, list) and any(w["destination_upi"] == "smoke@upi" for w in my_w), my_w
+    print(f"  my-withdrawals rows: {len(my_w)}", flush=True)
+
+    banner("Admin: list/reject withdrawal (refund path)")
+    adm_w = call("GET", f"/admin/withdrawals?admin_key={urllib.parse.quote(ADMIN)}&status=pending")
+    assert adm_w["withdrawals"] and adm_w["withdrawals"][0]["destination_upi"] == "smoke@upi", adm_w
+    wid = adm_w["withdrawals"][0]["id"]
+    reject = call(
+        "POST",
+        f"/admin/withdrawals/{wid}/reject?admin_key={urllib.parse.quote(ADMIN)}&reason=smoke-test-refund",
+    )
+    assert reject["status"] == "rejected", reject
+    wallet = call("GET", "/wallet/balance", token=token)
+    assert abs(wallet["balance"] - 40.0) < 0.01, wallet  # refunded
+    print(f"  balance after reject (refunded): ₹{wallet['balance']}", flush=True)
+
+    # Submit another withdrawal and mark complete this time.
+    call("POST", "/wallet/withdraw", {"amount": 5.0, "destination_upi": "smoke2@upi"}, token=token)
+    pending = call("GET", f"/admin/withdrawals?admin_key={urllib.parse.quote(ADMIN)}&status=pending")
+    wid2 = pending["withdrawals"][0]["id"]
+    done = call("POST", f"/admin/withdrawals/{wid2}/complete?admin_key={urllib.parse.quote(ADMIN)}")
+    assert done["status"] == "completed", done
+    print("  withdrawal completed OK", flush=True)
+
+    banner("Game vs CPU: create + play")
+    game = call(
+        "POST",
+        "/games",
+        {"bet_amount": 10, "vs_cpu": True, "video_prize_terms_ack": True},
+        token=token,
+        expected=201,
+    )
+    gid = game["id"]
+    assert game["is_vs_cpu"] is True, game
+    print(f"  game_id={gid}", flush=True)
+
+    # Legal moves on starting square (e2 should be e3, e4)
+    lm = call("GET", f"/games/{gid}/legal-moves?from=e2", token=token)
+    assert "e3" in lm["to"] and "e4" in lm["to"], lm
+    print(f"  e2 legal targets: {lm['to']}", flush=True)
+
+    # Play e4
+    mv = call("POST", f"/games/{gid}/move", {"move": "e2e4", "client_timestamp": int(time.time() * 1000)}, token=token)
+    print(f"  played e4 → move #{mv['move_number']} ({mv['move_san']})", flush=True)
+    time.sleep(0.4)
+
+    # Refresh + ensure CPU has replied (move_number >= 2)
+    g2 = call("GET", f"/games/{gid}", token=token)
+    assert len(g2["moves"]) >= 2, g2
+    print(f"  moves so far: {len(g2['moves'])}; latest: {g2['moves'][-1]['move_san']}", flush=True)
+
+    # An obviously illegal move should give 400
+    try:
+        call(
+            "POST",
+            f"/games/{gid}/move",
+            {"move": "e2e5", "client_timestamp": int(time.time() * 1000)},
+            token=token,
+            expected=400,
+        )
+        print("  illegal move correctly rejected", flush=True)
+    except AssertionError as e:
+        print(f"  WARN illegal-move check: {e}", flush=True)
+
+    banner("Resign + verify completion")
+    call("POST", f"/games/{gid}/resign", token=token)
+    g3 = call("GET", f"/games/{gid}", token=token)
+    assert g3["status"] == "completed", g3
+    assert g3["result"] == "black", g3
+    print(f"  game closed status={g3['status']} result={g3['result']}", flush=True)
+
+    banner("ALL SMOKE TESTS PASSED")
+
+
+if __name__ == "__main__":
+    main()

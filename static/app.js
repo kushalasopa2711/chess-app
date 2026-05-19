@@ -23,6 +23,7 @@ const S = {
   wsReconnectTimer: null, // pending reconnect setTimeout id
   wsClosedManually: false,// suppress auto-reconnect on intentional close
   selected:   null,       // selected square name (e.g. 'e2')
+  legalTargets: [],       // server-confirmed legal destinations for S.selected
   lastFrom:   null,
   lastTo:     null,
   boardFlip:  false,      // true when playing as black
@@ -105,6 +106,7 @@ const API = {
   getGames:        (st)     => API.get(`/games${st?'?status='+st:''}`),
   createGame:      (opts)   => API.post('/games', opts),
   getGame:         (id)     => API.get(`/games/${id}`),
+  legalMoves:      (id, from) => API.get(`/games/${id}/legal-moves?from=${encodeURIComponent(from)}`),
   joinGame:        (id)     => API.post(`/games/${id}/join`),
   cancelGame:      (id)     => API.post(`/games/${id}/cancel`, {}),
   makeMove:        (id, mv) => API.req(
@@ -184,7 +186,22 @@ function showView(name) {
   document.querySelectorAll('.nav-link').forEach(l => {
     l.classList.toggle('active', l.dataset.view === name);
   });
-  window.scrollTo(0, 0);
+
+  // Scroll to the top of the NEW view, hard (no smooth-scroll animation —
+  // smooth-scroll mid-layout-change was leaving users mid-page after login).
+  // Use rAF to wait for the new view to be laid out, then jump.
+  requestAnimationFrame(() => {
+    const html = document.documentElement;
+    const prev = html.style.scrollBehavior;
+    html.style.scrollBehavior = 'auto';
+    window.scrollTo(0, 0);
+    if (document.body) document.body.scrollTop = 0;
+    html.scrollTop = 0;
+    if (v && typeof v.scrollIntoView === 'function') {
+      v.scrollIntoView({ block: 'start', inline: 'nearest' });
+    }
+    html.style.scrollBehavior = prev || '';
+  });
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -295,6 +312,9 @@ function renderBoard(fen) {
 
       if (sq === S.selected)  cell.classList.add('selected');
       if (sq === S.lastFrom || sq === S.lastTo) cell.classList.add(sq === S.lastFrom ? 'last-from' : 'last-to');
+      if (S.legalTargets && S.legalTargets.includes(sq)) {
+        cell.classList.add(piece ? 'legal-capture' : 'legal-target');
+      }
 
       if (piece) {
         const span = document.createElement('span');
@@ -337,6 +357,30 @@ function renderLabels(flipped) {
   });
 }
 
+function clearSelection() {
+  S.selected = null;
+  S.legalTargets = [];
+}
+
+async function selectPiece(sq) {
+  S.selected = sq;
+  S.legalTargets = [];
+  renderBoard(S.game.fen);
+  // Ask the server which squares are actually legal so we can highlight
+  // them and reject illegal clicks BEFORE they hit the server.
+  if (!S.game) return;
+  const gameId = S.game.id;
+  try {
+    const r = await API.legalMoves(gameId, sq);
+    // Make sure the selection is still relevant (user may have clicked away).
+    if (S.selected !== sq || !S.game || S.game.id !== gameId) return;
+    S.legalTargets = Array.isArray(r.to) ? r.to : [];
+    renderBoard(S.game.fen);
+  } catch (_e) {
+    // Non-fatal — board is still usable, server will reject illegal moves.
+  }
+}
+
 function onSquareClick(sq, piece, _turnAtRender) {
   if (!S.game || S.game.status !== 'active') return;
   if (S.movePending) {
@@ -357,45 +401,47 @@ function onSquareClick(sq, piece, _turnAtRender) {
   if (!S.selected) {
     if (!myTurn) { Toast.warn("It's not your turn! ⏳"); return; }
     if (!isMyPiece) { Toast.warn("That's not your piece! 🙈"); return; }
-    S.selected = sq;
-    renderBoard(S.game.fen);
+    selectPiece(sq);
     return;
   }
 
+  // Clicking the already-selected square deselects.
   if (sq === S.selected) {
-    S.selected = null;
+    clearSelection();
     renderBoard(S.game.fen);
     return;
   }
 
-  // Re-select own piece
+  // Re-select one of our own pieces.
   if (isMyPiece && myTurn) {
-    S.selected = sq;
-    renderBoard(S.game.fen);
+    selectPiece(sq);
     return;
   }
 
-  // Attempt move
-  const move = S.selected + sq;
+  // Reject clicks on squares we *know* are not legal — eliminates the
+  // "Illegal move" toast spam for ordinary user misclicks.
+  if (S.legalTargets && S.legalTargets.length && !S.legalTargets.includes(sq)) {
+    Toast.warn('That square is not a legal move for the selected piece.');
+    return;
+  }
+
+  // Attempt move. Promotion: auto-queen for now.
+  let move = S.selected + sq;
+  if (needsPromotion(S.selected, sq, piece)) move += 'q';
   sendMove(move);
 }
 
-// Visually move the piece DOM element so the user sees their move *before*
-// the WebSocket reply arrives. The next "move" event re-renders from the
-// authoritative FEN, fixing castling/en-passant/promotion edge cases.
-function optimisticMovePiece(from, to) {
-  try {
-    const fromCell = document.querySelector(`.sq[data-sq="${from}"]`);
-    const toCell   = document.querySelector(`.sq[data-sq="${to}"]`);
-    if (!fromCell || !toCell) return;
-    const piece = fromCell.querySelector('.piece');
-    toCell.querySelectorAll('.piece').forEach(p => p.remove());
-    if (piece) toCell.appendChild(piece);
-    document.querySelectorAll('.sq.last-from, .sq.last-to, .sq.selected')
-      .forEach(el => el.classList.remove('last-from', 'last-to', 'selected'));
-    fromCell.classList.add('last-from');
-    toCell.classList.add('last-to');
-  } catch (_e) { /* visual only — never throw */ }
+function needsPromotion(from, to, _targetPiece) {
+  // Detect pawn promotion using the FROM piece on the live board.
+  const { grid } = parseFEN(S.game.fen);
+  const file = from.charCodeAt(0) - 97;
+  const rank = parseInt(from[1], 10);   // 1..8
+  const row  = 8 - rank;                 // grid row
+  const p = grid[row]?.[file];
+  if (!p) return false;
+  if (p === 'P' && to[1] === '8') return true;
+  if (p === 'p' && to[1] === '1') return true;
+  return false;
 }
 
 function clearMoveLock() {
@@ -426,14 +472,16 @@ async function sendMoveViaREST(move) {
 async function sendMove(move) {
   if (S.movePending) return;
   if (!S.game || S.game.status !== 'active') return;
-  const from = move.slice(0, 2);
-  const to   = move.slice(2, 4);
 
   S.movePending = true;
-  S.selected    = null;
-  S.lastFrom    = from;
-  S.lastTo      = to;
-  optimisticMovePiece(from, to);
+  clearSelection();
+  // Don't pre-paint the destination — show a subtle "Sending move…" hint on
+  // the turn banner instead. The board re-renders on the authoritative ack.
+  const banner = document.getElementById('turn-text');
+  const dot    = document.getElementById('turn-dot');
+  if (dot) dot.className = 'turn-dot waiting';
+  if (banner) banner.textContent = '⏳ Sending your move…';
+  renderBoard(S.game.fen);
 
   // Optimistically hand the clock to the opponent so their timer starts
   // ticking right away. The next authoritative server message will overwrite.
@@ -444,9 +492,9 @@ async function sendMove(move) {
       S.clock.syncAt = Date.now();
       updateClockDisplay();
     }
-  } catch (_e) { /* visual only */ }
+  } catch (_e) { /* non-critical */ }
 
-  // Safety: if no ack within 12s, *re-sync from the server* (don't blindly
+  // Safety: if no ack within 12s, re-sync from the server (don't blindly
   // re-send — re-sending caused the spurious "Not your turn" 400s when the
   // first attempt actually got through over WS).
   if (S.movePendingTimer) clearTimeout(S.movePendingTimer);
@@ -590,7 +638,7 @@ async function handleWSMessage(msg) {
     S.game.fen = data.fen;
     S.lastFrom = data.move_uci?.slice(0,2);
     S.lastTo   = data.move_uci?.slice(2,4);
-    S.selected = null;
+    clearSelection();
     renderBoard(S.game.fen);
     appendMoveToList(data.move_san, data.move_number, data.player_id);
     if (data.white_time_ms != null && data.black_time_ms != null) {
@@ -626,11 +674,10 @@ async function handleWSMessage(msg) {
 
   if (type === 'error') {
     clearMoveLock();
-    // If the server rejected our optimistic move, snap the board back to the
-    // authoritative state so the player doesn't see a ghost piece.
-    S.selected = null;
+    clearSelection();
     S.lastFrom = S.lastTo = null;
     if (S.game) renderBoard(S.game.fen);
+    updateTurnBanner();
     Toast.err(`🚫 ${data.message}`);
   }
 
@@ -651,6 +698,7 @@ async function refreshGame() {
   updatePlayerCards();
   renderMoveList();
   updatePrize();
+  updateTurnBanner();
   if (S.game.status === 'active') {
     syncClockFromGame();
     startClockTicker();

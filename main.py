@@ -1,19 +1,23 @@
 """
 ChessWager API  +  Frontend
 ============================
-Run:  python -m uvicorn main:app --reload --port 8000
-Docs: http://localhost:8000/docs
-App:  http://localhost:8000/
+Local dev:   python -m uvicorn main:app --reload --port 8000
+Production:  ENV=production gunicorn -k uvicorn.workers.UvicornWorker main:app
+Docs:        http://localhost:8000/docs
+App:         http://localhost:8000/
 """
 import logging
+import os
 from contextlib import asynccontextmanager
 from pathlib import Path
+from urllib.parse import urlparse
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
+from config import ALLOWED_ORIGINS, DATABASE_URL, ENV, IS_PROD
 from database import init_db
 from routers.auth_router import router as auth_router
 from routers.users_router import router as users_router
@@ -23,13 +27,24 @@ from routers.video_router import router as video_router
 from routers.admin_router import router as admin_router
 from routers.deposit_router import router as deposit_router
 
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(
+    level=logging.INFO if IS_PROD else logging.DEBUG,
+    format="%(asctime)s %(levelname)s %(name)s %(message)s",
+)
+logger = logging.getLogger(__name__)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await init_db()
-    logging.getLogger(__name__).info("Database ready.")
+    masked = DATABASE_URL
+    try:
+        parts = urlparse(DATABASE_URL)
+        if parts.password:
+            masked = DATABASE_URL.replace(parts.password, "***")
+    except Exception:
+        pass
+    logger.info("Database ready  env=%s  url=%s", ENV, masked)
     yield
 
 
@@ -40,13 +55,22 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+# In production, set ALLOWED_ORIGINS env var to a comma-separated allow-list.
+# CORS with credentials cannot be used with allow_origins=["*"], so flip the
+# credentials flag when running open in dev mode.
+_cors_allow_credentials = ALLOWED_ORIGINS != ["*"]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
+    allow_origins=ALLOWED_ORIGINS,
+    allow_credentials=_cors_allow_credentials,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+if IS_PROD and ALLOWED_ORIGINS == ["*"]:
+    logger.warning(
+        "ALLOWED_ORIGINS is '*' in production. Set ALLOWED_ORIGINS to your "
+        "real frontend origin(s) for a stricter CORS policy."
+    )
 
 # API routers
 app.include_router(auth_router)
@@ -87,4 +111,14 @@ async def serve_admin():
 
 @app.get("/health", tags=["Health"])
 async def health():
-    return {"status": "ok"}
+    return {"status": "ok", "env": ENV}
+
+
+@app.get("/favicon.ico", include_in_schema=False)
+async def favicon():
+    fav = STATIC_DIR / "favicon.ico"
+    if fav.exists():
+        return FileResponse(str(fav))
+    # 204 keeps logs cleaner than a 404 for every page load.
+    from fastapi.responses import Response
+    return Response(status_code=204)

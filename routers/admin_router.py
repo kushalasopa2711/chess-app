@@ -17,7 +17,6 @@ Endpoints:
 """
 from __future__ import annotations
 
-import os
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
@@ -27,6 +26,7 @@ from fastapi.responses import FileResponse
 from sqlalchemy import case, delete, func, select, tuple_
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from config import ADMIN_SECRET
 from database import get_db
 from models import (
     AntiCheatFlag, DepositRequest, Game, GameStatus, Move, Penalty,
@@ -36,12 +36,16 @@ from models import (
 from video_evidence import payout_video_requirement_error, video_evidence_summary_for_admin
 
 router = APIRouter(prefix="/admin", tags=["Admin"])
-ADMIN_SECRET = os.getenv("ADMIN_SECRET", "admin-secret-change-me")
 VIDEOS_STORAGE_ROOT = Path("videos").resolve()
 
 
 def _auth(key: Optional[str]) -> None:
-    if key != ADMIN_SECRET:
+    # Constant-time comparison so an attacker cannot brute-force the admin key
+    # via response-timing differences.
+    if not key or not ADMIN_SECRET:
+        raise HTTPException(status_code=403, detail="Invalid admin key.")
+    import hmac
+    if not hmac.compare_digest(key, ADMIN_SECRET):
         raise HTTPException(status_code=403, detail="Invalid admin key.")
 
 
