@@ -23,7 +23,7 @@ from typing import Optional
 
 import aiofiles
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from auth import get_active_unbanned_user, get_current_user
@@ -71,6 +71,32 @@ async def upload_chunk(
     data = await chunk.read()
     if len(data) > MAX_CHUNK_SIZE_MB * 1024 * 1024:
         raise HTTPException(status_code=413, detail=f"Chunk exceeds {MAX_CHUNK_SIZE_MB} MB limit.")
+
+    # Same chunk index may be re-posted on mobile retries — replace DB + file so we
+    # never accumulate duplicate rows or partial DB / disk mismatches.
+    old_chunks = (
+        await db.execute(
+            select(VideoChunk).where(
+                VideoChunk.game_id == game_id,
+                VideoChunk.user_id == user.id,
+                VideoChunk.chunk_number == chunk_number,
+            )
+        )
+    ).scalars().all()
+    for vc in old_chunks:
+        try:
+            Path(vc.file_path).unlink(missing_ok=True)
+        except OSError:
+            pass
+    if old_chunks:
+        await db.execute(
+            delete(VideoChunk).where(
+                VideoChunk.game_id == game_id,
+                VideoChunk.user_id == user.id,
+                VideoChunk.chunk_number == chunk_number,
+            )
+        )
+        await db.flush()
 
     # Save file
     game_dir = VIDEOS_DIR / str(game_id) / str(user.id)

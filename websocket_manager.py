@@ -30,7 +30,7 @@ class ConnectionManager:
     async def connect(
         self, websocket: WebSocket, game_id: int, user_id: int
     ) -> bool:
-        await websocket.accept()
+        """Register this socket in the game room. Caller must ``await websocket.accept()`` first."""
         if game_id not in _connections:
             _connections[game_id] = {}
 
@@ -84,7 +84,7 @@ class ConnectionManager:
 
     # ── Per-user notification channels ────────────────────────────────────
     async def connect_user(self, websocket: WebSocket, user_id: int) -> None:
-        await websocket.accept()
+        """Append socket to user notification fan-out. Caller must ``await websocket.accept()`` first."""
         _user_channels.setdefault(user_id, []).append(websocket)
         logger.info("User %d opened a notification channel (now %d open).",
                     user_id, len(_user_channels[user_id]))

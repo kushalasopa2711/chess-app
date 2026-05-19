@@ -968,7 +968,9 @@ async def websocket_game(
       {"type": "kicked", "data": {"reason": "..."}}
       {"type": "pong"}
     """
-    # Authenticate
+    await websocket.accept()
+
+    # Authenticate (after accept so the upgrade never returns HTTP 403 to clients)
     try:
         from jose import jwt as _jwt
         from config import SECRET_KEY, ALGORITHM

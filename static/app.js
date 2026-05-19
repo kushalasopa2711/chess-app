@@ -1753,8 +1753,10 @@ function connectUserWS() {
     try { msg = JSON.parse(ev.data); } catch (_e) { return; }
     handleUserWSMessage(msg);
   };
-  ws.onclose = () => {
-    if (!S.token) return;          // user logged out — don't reconnect
+  ws.onclose = (ev) => {
+    if (!S.token) return;
+    // 4001 = invalid/expired token, inactive, or banned — reconnecting would only spam logs.
+    if (ev.code === 4001) return;
     if (S.userWsReconnectTimer) return;
     S.userWsReconnectTimer = setTimeout(() => {
       S.userWsReconnectTimer = null;

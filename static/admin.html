@@ -129,6 +129,9 @@
     outline: none; min-width: 220px;
   }
   .search-input:focus { border-color: #6C63FF; }
+  @media (max-width: 700px) {
+    .search-input { min-width: 0; width: 100%; max-width: 100%; }
+  }
 
   /* ── Table ── */
   .table-wrap {
@@ -164,6 +167,16 @@
   }
   .users-table thead th.col-actions { background: #252A40; z-index: 3; }
   .users-table tr:hover td.col-actions { background: #252A40; }
+
+  @media (max-width: 720px) {
+    .users-table { min-width: 520px; font-size: 13px; }
+    .users-table th.col-mob-hide,
+    .users-table td.col-mob-hide { display: none !important; }
+    .users-table th.col-actions,
+    .users-table td.col-actions { min-width: 150px; box-shadow: -6px 0 12px rgba(0, 0, 0, 0.3); }
+    .user-actions { min-width: 0; justify-content: flex-start; gap: 4px; }
+    .user-actions .act-btn { font-size: 11px; padding: 5px 8px; }
+  }
 
   /* ── Badges ── */
   .badge {
@@ -412,11 +425,11 @@
             <tr>
               <th class="col-id">ID</th>
               <th class="col-user">Username</th>
-              <th class="col-email">Email</th>
+              <th class="col-email col-mob-hide">Email</th>
               <th class="col-money">Balance</th>
               <th class="col-money">Locked</th>
-              <th class="col-num">Games</th>
-              <th class="col-num">Wins</th>
+              <th class="col-num col-mob-hide">Games</th>
+              <th class="col-num col-mob-hide">Wins</th>
               <th class="col-num">Flags</th>
               <th class="col-status">Status</th>
               <th class="col-actions">Actions</th>
@@ -425,7 +438,7 @@
           <tbody id="users-body"><tr><td colspan="10" class="empty">Loading…</td></tr></tbody>
         </table>
       </div>
-      <p class="table-hint" id="users-table-hint">Tip: scroll horizontally if your window is narrow — action buttons stay pinned on the right.</p>
+      <p class="table-hint" id="users-table-hint">On narrow screens, scroll sideways for full columns — Email / Games / Wins hide to fit. Actions stay on the right.</p>
       <div class="pagination" id="users-pg"></div>
     </section>
 
@@ -838,11 +851,11 @@ async function loadUsers(page = _page_users) {
         return `<tr>
           <td class="col-id">#${u.id}</td>
           <td class="col-user"><strong style="color:#fff">${esc(u.username)}</strong></td>
-          <td class="col-email" title="${esc(u.email)}">${esc(u.email)}</td>
+          <td class="col-email col-mob-hide" title="${esc(u.email)}">${esc(u.email)}</td>
           <td class="col-money"><strong style="color:#43C59E">₹${u.balance.toFixed(2)}</strong></td>
           <td class="col-money" style="color:#7B8CB8">₹${u.locked.toFixed(2)}</td>
-          <td class="col-num" style="color:#A0A8CC">${u.games_played}</td>
-          <td class="col-num" style="color:#FFD600">${u.games_won}</td>
+          <td class="col-num col-mob-hide" style="color:#A0A8CC">${u.games_played}</td>
+          <td class="col-num col-mob-hide" style="color:#FFD600">${u.games_won}</td>
           <td class="col-num">${u.flag_count > 0
             ? `<span class="badge ${u.flag_count >= 3 ? 'badge-red' : 'badge-yellow'}">${u.flag_count}</span>`
             : `<span class="badge badge-gray">0</span>`}

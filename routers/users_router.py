@@ -62,6 +62,10 @@ async def user_notifications_ws(
 
     Frontend uses these to refresh balance + show toasts without polling.
     """
+    # Accept before auth so proxies never see a bare HTTP 403 on failed upgrade
+    # (closing without accept() is non-standard and breaks some CDNs / browsers).
+    await websocket.accept()
+
     user_id: int | None = None
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
@@ -76,7 +80,7 @@ async def user_notifications_ws(
 
     async with AsyncSessionLocal() as db:
         u = (await db.execute(select(User).where(User.id == user_id))).scalar_one_or_none()
-        if not u or not u.is_active:
+        if not u or not u.is_active or u.is_banned:
             await websocket.close(code=4001)
             return
 
