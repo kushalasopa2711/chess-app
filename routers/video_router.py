@@ -15,8 +15,8 @@ Endpoints:
 """
 from __future__ import annotations
 
+import hmac
 import logging
-import os
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
@@ -27,6 +27,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from auth import get_active_unbanned_user, get_current_user
+from config import ADMIN_SECRET
 from database import get_db
 from models import AntiCheatFlag, FlagType, Game, Penalty, Transaction, TransactionType, User, VideoChunk, Wallet
 from websocket_manager import manager
@@ -38,11 +39,10 @@ VIDEOS_DIR = Path("videos")
 VIDEOS_DIR.mkdir(exist_ok=True)
 
 MAX_CHUNK_SIZE_MB = 50  # 50 MB per chunk ceiling
-ADMIN_SECRET = os.getenv("ADMIN_SECRET", "admin-secret-change-me")
 
 
 def _require_admin(admin_key: str) -> None:
-    if admin_key != ADMIN_SECRET:
+    if not admin_key or not ADMIN_SECRET or not hmac.compare_digest(admin_key, ADMIN_SECRET):
         raise HTTPException(status_code=403, detail="Admin access required.")
 
 

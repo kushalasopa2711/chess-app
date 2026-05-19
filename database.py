@@ -59,6 +59,8 @@ def _upgrade_schema_sync(connection) -> None:
                "ALTER TABLE games ADD COLUMN black_time_ms INTEGER DEFAULT 600000")
     add_column("clock_last_tick_at", "ALTER TABLE games ADD COLUMN IF NOT EXISTS clock_last_tick_at TIMESTAMP",
                "ALTER TABLE games ADD COLUMN clock_last_tick_at TIMESTAMP")
+    add_column("platform_revenue", "ALTER TABLE games ADD COLUMN IF NOT EXISTS platform_revenue DOUBLE PRECISION NOT NULL DEFAULT 0",
+               "ALTER TABLE games ADD COLUMN platform_revenue REAL NOT NULL DEFAULT 0")
 
     if "users" in insp.get_table_names():
         ucols = {c["name"] for c in insp.get_columns("users")}

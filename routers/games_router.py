@@ -127,7 +127,21 @@ def _after_move_clock(game: Game, mover_was_white: bool) -> None:
 async def _settle_by_result(db: AsyncSession, game: Game, result_str: str) -> None:
     """
     Apply wallet + stats for a finished game. result_str is 'white', 'black', or 'draw'.
-    Human vs CPU: only the human locks stake; refunds and payouts follow that rule.
+
+    Money model (FIXED — previously the loser's balance was not being debited):
+
+      vs CPU:
+        - human wins  → bet stays locked, PendingPayout(gross=2x, fee=%, net=gross-fee).
+                        Final balance = unchanged until payout approved.
+        - human loses → DEBIT bet from balance; platform_revenue += bet (no opponent payout).
+        - draw        → release lock, no balance change.
+
+      vs human:
+        - decisive    → DEBIT bet from LOSER's balance; PendingPayout to winner
+                        (gross=2x, fee=%, net=gross-fee). Platform fee earned on approval.
+        - draw        → release lock on both sides, no balance change.
+
+    ``total_invested`` is decremented in every branch so the lock is released.
     """
     game.status = GameStatus.COMPLETED
     game.result = result_str
@@ -140,14 +154,28 @@ async def _settle_by_result(db: AsyncSession, game: Game, result_str: str) -> No
     white_user = white_r.scalar_one()
     black_user = black_r.scalar_one()
 
+    bet = float(game.bet_amount)
+
+    # Helper — debit a stake. Records both the wallet mutation and a Transaction
+    # row so the user's wallet history is consistent with the new balance.
+    def _debit(wallet: Wallet, uid: int, description: str) -> None:
+        wallet.balance = max(0.0, round(wallet.balance - bet, 2))
+        db.add(Transaction(
+            user_id=uid,
+            amount=bet,
+            type=TransactionType.BET,
+            game_id=game.id,
+            description=description,
+        ))
+
     if game.is_vs_cpu:
-        # Only white (human) locked a real stake for vs_cpu (white is always human creator).
-        white_wallet.total_invested = max(0.0, round(white_wallet.total_invested - game.bet_amount, 2))
+        # Only the human (white) ever locked a real stake for vs_cpu games.
+        white_wallet.total_invested = max(0.0, round(white_wallet.total_invested - bet, 2))
         if result_str == "draw":
-            white_wallet.balance = round(white_wallet.balance + game.bet_amount, 2)
+            # Stake released (already unlocked above) — no balance change.
             db.add(Transaction(
                 user_id=game.white_player_id,
-                amount=game.bet_amount,
+                amount=bet,
                 type=TransactionType.REFUND,
                 game_id=game.id,
                 description=f"Draw refund – Game #{game.id} (vs CPU)",
@@ -157,15 +185,22 @@ async def _settle_by_result(db: AsyncSession, game: Game, result_str: str) -> No
             game.winner_id = winner_id
             winner_u = white_user if result_str == "white" else black_user
             if winner_u.is_bot:
-                db.add(Transaction(
-                    user_id=game.white_player_id,
-                    amount=game.bet_amount,
-                    type=TransactionType.BET,
-                    game_id=game.id,
-                    description=f"Lost Game #{game.id} – bet forfeited (vs CPU)",
-                ))
+                # Human lost to CPU — the bet leaves their wallet entirely and
+                # the platform retains the full amount as revenue for this game.
+                _debit(white_wallet, game.white_player_id,
+                       f"Lost Game #{game.id} – bet forfeited (vs CPU)")
+                game.platform_revenue = round((game.platform_revenue or 0.0) + bet, 2)
+                logger.info(
+                    "Game #%d vs CPU: human lost. Debit ₹%.2f, platform revenue +₹%.2f",
+                    game.id, bet, bet,
+                )
             else:
-                gross = round(game.bet_amount * 2, 2)
+                # Human won vs CPU. Debit the stake; the PendingPayout will
+                # credit `net` back when admin approves the video review, so
+                # the net wallet swing is (net - bet) once approved.
+                _debit(white_wallet, game.white_player_id,
+                       f"Stake settled – Game #{game.id} (vs CPU win, pending payout)")
+                gross = round(bet * 2, 2)
                 fee = round(gross * PLATFORM_FEE_PERCENT / 100, 2)
                 net = round(gross - fee, 2)
                 auto_release = datetime.utcnow() + timedelta(hours=PAYOUT_HOLD_HOURS)
@@ -182,27 +217,26 @@ async def _settle_by_result(db: AsyncSession, game: Game, result_str: str) -> No
                 )
                 logger.info(
                     "Game #%d vs CPU ended: human wins. Gross=₹%.2f Fee=₹%.2f Net=₹%.2f escrow",
-                    game.id,
-                    gross,
-                    fee,
-                    net,
+                    game.id, gross, fee, net,
                 )
         white_user.games_played += 1
         if result_str == "white":
             white_user.games_won += 1
         db.add(white_user)
+        db.add(white_wallet)
+        db.add(black_wallet)
     else:
-        white_wallet.total_invested = max(0.0, round(white_wallet.total_invested - game.bet_amount, 2))
-        black_wallet.total_invested = max(0.0, round(black_wallet.total_invested - game.bet_amount, 2))
+        # PvP — both players had a real stake locked.
+        white_wallet.total_invested = max(0.0, round(white_wallet.total_invested - bet, 2))
+        black_wallet.total_invested = max(0.0, round(black_wallet.total_invested - bet, 2))
 
         if result_str == "draw":
-            white_wallet.balance = round(white_wallet.balance + game.bet_amount, 2)
-            black_wallet.balance = round(black_wallet.balance + game.bet_amount, 2)
+            # No money moves. Lock released; both players keep their balance.
             for uid in (game.white_player_id, game.black_player_id):
                 db.add(
                     Transaction(
                         user_id=uid,
-                        amount=game.bet_amount,
+                        amount=bet,
                         type=TransactionType.REFUND,
                         game_id=game.id,
                         description=f"Draw refund – Game #{game.id}",
@@ -210,10 +244,11 @@ async def _settle_by_result(db: AsyncSession, game: Game, result_str: str) -> No
                 )
         else:
             winner_id = game.white_player_id if result_str == "white" else game.black_player_id
+            loser_id  = game.black_player_id if result_str == "white" else game.white_player_id
             game.winner_id = winner_id
-            gross = round(game.bet_amount * 2, 2)
-            fee = round(gross * PLATFORM_FEE_PERCENT / 100, 2)
-            net = round(gross - fee, 2)
+            gross = round(bet * 2, 2)
+            fee   = round(gross * PLATFORM_FEE_PERCENT / 100, 2)
+            net   = round(gross - fee, 2)
             auto_release = datetime.utcnow() + timedelta(hours=PAYOUT_HOLD_HOURS)
             db.add(
                 PendingPayout(
@@ -226,24 +261,17 @@ async def _settle_by_result(db: AsyncSession, game: Game, result_str: str) -> No
                     auto_release_at=auto_release,
                 )
             )
-            loser_id = game.black_player_id if result_str == "white" else game.white_player_id
-            db.add(
-                Transaction(
-                    user_id=loser_id,
-                    amount=game.bet_amount,
-                    type=TransactionType.BET,
-                    game_id=game.id,
-                    description=f"Lost Game #{game.id} – bet forfeited",
-                )
-            )
+            # Debit BOTH players' stakes — the loser's is gone permanently and
+            # the winner's will be offset by `net` when the payout is approved.
+            loser_wallet  = white_wallet if loser_id  == game.white_player_id else black_wallet
+            winner_wallet = white_wallet if winner_id == game.white_player_id else black_wallet
+            _debit(loser_wallet, loser_id,
+                   f"Lost Game #{game.id} – bet forfeited")
+            _debit(winner_wallet, winner_id,
+                   f"Stake settled – Game #{game.id} (won, pending payout)")
             logger.info(
                 "Game #%d ended: %s wins. Gross=₹%.2f Fee=₹%.2f Net=₹%.2f held %sh",
-                game.id,
-                result_str,
-                gross,
-                fee,
-                net,
-                PAYOUT_HOLD_HOURS,
+                game.id, result_str, gross, fee, net, PAYOUT_HOLD_HOURS,
             )
 
         white_user.games_played += 1
@@ -254,10 +282,6 @@ async def _settle_by_result(db: AsyncSession, game: Game, result_str: str) -> No
             black_user.games_won += 1
         db.add(white_user)
         db.add(black_user)
-        db.add(white_wallet)
-        db.add(black_wallet)
-
-    if game.is_vs_cpu:
         db.add(white_wallet)
         db.add(black_wallet)
 

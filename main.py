@@ -26,6 +26,11 @@ from routers.games_router import router as games_router
 from routers.video_router import router as video_router
 from routers.admin_router import router as admin_router
 from routers.deposit_router import router as deposit_router
+from video_retention import (
+    VIDEO_RETENTION_DAYS,
+    VIDEO_RETENTION_SWEEP_INTERVAL_HOURS,
+    retention_loop,
+)
 
 logging.basicConfig(
     level=logging.INFO if IS_PROD else logging.DEBUG,
@@ -45,7 +50,21 @@ async def lifespan(app: FastAPI):
     except Exception:
         pass
     logger.info("Database ready  env=%s  url=%s", ENV, masked)
-    yield
+
+    import asyncio
+    retention_task = asyncio.create_task(retention_loop())
+    logger.info(
+        "Video retention sweeper armed: %d-day retention, sweep every %dh.",
+        VIDEO_RETENTION_DAYS, VIDEO_RETENTION_SWEEP_INTERVAL_HOURS,
+    )
+    try:
+        yield
+    finally:
+        retention_task.cancel()
+        try:
+            await retention_task
+        except (asyncio.CancelledError, Exception):
+            pass
 
 
 app = FastAPI(

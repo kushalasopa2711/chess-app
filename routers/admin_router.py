@@ -446,6 +446,50 @@ async def list_flags(
 
 # ── Video chunks ──────────────────────────────────────────────────────────────
 
+@router.get("/videos/retention")
+async def video_retention_status(
+    admin_key: str = Query(""),
+    db: AsyncSession = Depends(get_db),
+):
+    """Report retention policy + how many chunks are currently older than it."""
+    _auth(admin_key)
+    from datetime import timedelta
+    from video_retention import VIDEO_RETENTION_DAYS, VIDEO_RETENTION_SWEEP_INTERVAL_HOURS
+
+    cutoff = datetime.utcnow() - timedelta(days=VIDEO_RETENTION_DAYS)
+    expired = (
+        await db.execute(
+            select(func.count(VideoChunk.id)).where(VideoChunk.created_at < cutoff)
+        )
+    ).scalar_one()
+    total = (await db.execute(select(func.count(VideoChunk.id)))).scalar_one()
+    oldest = (
+        await db.execute(select(func.min(VideoChunk.created_at)))
+    ).scalar_one()
+    return {
+        "retention_days": VIDEO_RETENTION_DAYS,
+        "sweep_interval_hours": VIDEO_RETENTION_SWEEP_INTERVAL_HOURS,
+        "total_chunks": int(total),
+        "expired_chunks": int(expired),
+        "oldest_chunk_created_at": oldest.isoformat() if oldest else None,
+    }
+
+
+@router.post("/videos/retention/run")
+async def run_video_retention(
+    admin_key: str = Query(""),
+):
+    """Manually trigger a retention sweep right now."""
+    _auth(admin_key)
+    from video_retention import purge_expired_videos, VIDEO_RETENTION_DAYS
+    files, rows = await purge_expired_videos()
+    return {
+        "files_deleted": files,
+        "db_rows_deleted": rows,
+        "retention_days": VIDEO_RETENTION_DAYS,
+    }
+
+
 @router.get("/videos")
 async def list_videos(
     admin_key: str = Query(""),
@@ -954,7 +998,15 @@ async def revenue_summary(
     admin_key: str = Query(""),
     db: AsyncSession = Depends(get_db),
 ):
-    """Total platform fees collected (sum of platform_fee on approved payouts)."""
+    """
+    Total platform revenue from all sources:
+
+      - Platform fees on approved payouts (PendingPayout.platform_fee where status='approved')
+      - Net amounts on rejected payouts (forfeited winnings kept by platform)
+      - Penalties applied via video review
+      - Direct revenue retained at game-settle time (Game.platform_revenue) —
+        primarily vs-CPU losses where the full bet becomes platform income.
+    """
     _auth(admin_key)
     from sqlalchemy import func as f
     approved = await db.execute(
@@ -968,14 +1020,20 @@ async def revenue_summary(
     penalties = await db.execute(
         select(f.coalesce(f.sum(PendingPayout.penalty_amount), 0))
     )
+    cpu_losses = await db.execute(
+        select(f.coalesce(f.sum(Game.platform_revenue), 0))
+        .where(Game.status == GameStatus.COMPLETED)
+    )
     total_fees = float(approved.scalar_one())
     total_withheld = float(withheld.scalar_one())
     total_penalties = float(penalties.scalar_one())
+    total_cpu = float(cpu_losses.scalar_one())
     return {
         "platform_fees_collected": round(total_fees, 2),
         "payouts_withheld": round(total_withheld, 2),
         "penalties_collected": round(total_penalties, 2),
-        "total_revenue": round(total_fees + total_withheld + total_penalties, 2),
+        "cpu_game_revenue": round(total_cpu, 2),
+        "total_revenue": round(total_fees + total_withheld + total_penalties + total_cpu, 2),
     }
 
 

@@ -109,6 +109,7 @@
   .stat-card.orange { --accent: #FF7043; }
   .stat-card.red { --accent: #FF5252; }
   .stat-card.yellow { --accent: #FFD600; }
+  .stat-card.blue { --accent: #4ABCFF; }
   .stat-icon { font-size: 28px; margin-bottom: 12px; }
   .stat-val { font-size: 30px; font-weight: 900; color: #fff; }
   .stat-label { font-size: 13px; color: #7B8CB8; font-weight: 700; margin-top: 4px; }
@@ -441,13 +442,15 @@
         <div>
           <div class="sec-title">📹 Video Evidence</div>
           <div class="sec-sub" id="videos-count">Loading…</div>
+          <div class="sec-sub" id="videos-retention" style="margin-top:6px;color:#FFD580;line-height:1.55"></div>
           <div class="sec-sub" style="margin-top:10px;max-width:720px;line-height:1.55">
             <strong>Clean</strong> is not an auto quality score — it only means no segment in this session is manually flagged yet. Recordings are stored under <code>videos/&lt;game_id&gt;/&lt;user_id&gt;/</code>. Each row is one <strong>session</strong> (player + game); older data may list multiple segments — use <strong>▶ Play</strong> to watch them in order.
           </div>
         </div>
-        <div style="display:flex;gap:8px">
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
           <button class="act-btn act-ban" onclick="loadVideos(true)">🚩 Flagged Only</button>
           <button class="act-btn act-view" onclick="loadVideos(false)">📋 All sessions</button>
+          <button class="act-btn act-view" onclick="runRetentionSweep()" title="Delete videos older than the retention window">🧹 Run cleanup now</button>
         </div>
       </div>
       <div class="table-wrap">
@@ -928,24 +931,39 @@ function _revokeVideoBlobUrl() {
 }
 
 async function _loadChunkIntoPlayer(chunkId) {
+  // First, do a small ranged GET so 404/403/permission errors surface as
+  // a readable toast instead of a silent black <video> box.
   const url = `/admin/videos/${chunkId}/file?admin_key=${encodeURIComponent(ADMIN_KEY)}`;
-  const r = await fetch(url);
-  if (!r.ok) {
-    const t = await r.text();
-    let msg = `HTTP ${r.status}`;
+  const probe = await fetch(url, { headers: { Range: 'bytes=0-1023' } });
+  if (!probe.ok && probe.status !== 206) {
+    let msg = `HTTP ${probe.status}`;
     try {
+      const t = await probe.text();
       const j = JSON.parse(t);
-      if (j.detail != null) msg = typeof j.detail === 'string' ? j.detail : JSON.stringify(j.detail);
-    } catch (_) {
-      if (t) msg = t.slice(0, 220);
-    }
+      if (j.detail) msg = typeof j.detail === 'string' ? j.detail : JSON.stringify(j.detail);
+    } catch (_) { /* keep status code */ }
     throw new Error(msg);
   }
-  const blob = await r.blob();
   _revokeVideoBlobUrl();
-  _videoBlobUrl = URL.createObjectURL(blob);
   const v = document.getElementById('video-preview-el');
-  v.src = _videoBlobUrl;
+  // Native streaming — browser handles Range requests, lazy decode, and is
+  // far more forgiving of partially-broken WebM containers than blob URLs.
+  v.src = url;
+  v.load();
+  await new Promise((resolve, reject) => {
+    let done = false;
+    const onLoad = () => { if (done) return; done = true; cleanup(); resolve(); };
+    const onErr  = () => { if (done) return; done = true; cleanup(); reject(new Error('Video failed to load — file may be missing or unreadable.')); };
+    const cleanup = () => {
+      v.removeEventListener('loadeddata', onLoad);
+      v.removeEventListener('canplay', onLoad);
+      v.removeEventListener('error', onErr);
+    };
+    v.addEventListener('loadeddata', onLoad, { once: true });
+    v.addEventListener('canplay', onLoad, { once: true });
+    v.addEventListener('error', onErr, { once: true });
+    setTimeout(() => { if (!done) onErr(); }, 12000);
+  });
 }
 
 function playAdminSession(chunkIds, username, gameId) {
@@ -1012,7 +1030,30 @@ document.addEventListener('keydown', (e) => {
   }
 });
 
+async function _loadRetentionBanner() {
+  const el = document.getElementById('videos-retention');
+  if (!el) return;
+  try {
+    const r = await api('GET', `/admin/videos/retention?admin_key=${encodeURIComponent(ADMIN_KEY)}`);
+    el.textContent =
+      `Retention: ${r.retention_days} days · sweep every ${r.sweep_interval_hours}h · `
+      + `${r.total_chunks} stored · ${r.expired_chunks} older than window (will be auto-removed on next sweep).`;
+  } catch (_e) { /* don't block page on stats */ }
+}
+
+async function runRetentionSweep() {
+  if (!confirm('Run cleanup now? Files older than the retention window will be deleted from disk and DB.')) return;
+  try {
+    const r = await api('POST', `/admin/videos/retention/run?admin_key=${encodeURIComponent(ADMIN_KEY)}`);
+    toast(`Cleanup done — ${r.files_deleted} file(s), ${r.db_rows_deleted} DB row(s) removed.`, 'ok');
+    loadVideos(false);
+  } catch (e) {
+    toast('Cleanup failed: ' + e.message, 'err');
+  }
+}
+
 async function loadVideos(flaggedOnly = false) {
+  _loadRetentionBanner();
   try {
     const q = `/admin/videos?admin_key=${ADMIN_KEY}&per_page=50&flagged_only=${flaggedOnly}`;
     const d = await get(q);
@@ -1387,11 +1428,17 @@ async function rejectPayout(id, uname) {
 async function loadRevenue() {
   try {
     const r = await get(`/admin/revenue?admin_key=${ADMIN_KEY}`);
+    const cpu = Number(r.cpu_game_revenue || 0);
     document.getElementById('rev-grid').innerHTML = `
       <div class="stat-card green">
         <div class="stat-icon">💰</div>
         <div class="stat-val">₹${r.platform_fees_collected.toFixed(2)}</div>
-        <div class="stat-label">Platform Fees (10%)</div>
+        <div class="stat-label">Platform Fees (PvP wins)</div>
+      </div>
+      <div class="stat-card blue">
+        <div class="stat-icon">🤖</div>
+        <div class="stat-val">₹${cpu.toFixed(2)}</div>
+        <div class="stat-label">CPU-game Revenue (player losses)</div>
       </div>
       <div class="stat-card red">
         <div class="stat-icon">🚫</div>

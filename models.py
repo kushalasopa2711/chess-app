@@ -100,6 +100,11 @@ class Game(Base):
     white_time_ms = Column(Integer, default=600_000)
     black_time_ms = Column(Integer, default=600_000)
     clock_last_tick_at = Column(DateTime, nullable=True)
+    # Platform's net take for this game, settled at the moment the game ends.
+    # Populated for vs-CPU losses (the bet itself becomes revenue) and any other
+    # forfeit/abandon paths where the platform retains funds without paying out.
+    # Fees on PvP wins are tracked on PendingPayout.platform_fee.
+    platform_revenue = Column(Float, default=0.0, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow)
     started_at = Column(DateTime, nullable=True)
     ended_at = Column(DateTime, nullable=True)
