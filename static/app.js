@@ -18,6 +18,10 @@ const S = {
   game:       null,       // current game object
   myColor:    null,       // 'white' | 'black'
   ws:         null,       // WebSocket
+  wsGameId:   null,       // game the current WS belongs to
+  wsPingTimer:null,       // setInterval id for WS heartbeat
+  wsReconnectTimer: null, // pending reconnect setTimeout id
+  wsClosedManually: false,// suppress auto-reconnect on intentional close
   selected:   null,       // selected square name (e.g. 'e2')
   lastFrom:   null,
   lastTo:     null,
@@ -394,8 +398,26 @@ function clearMoveLock() {
   }
 }
 
+async function sendMoveViaREST(move) {
+  try {
+    const res = await API.makeMove(S.game.id, move);
+    clearMoveLock();
+    if (res.time_forfeit) {
+      await refreshGame();
+      showResult(res.result, 'time_forfeit');
+      return;
+    }
+    await refreshGame();
+  } catch (e) {
+    clearMoveLock();
+    Toast.err(e.message || 'Could not send move');
+    if (S.game) renderBoard(S.game.fen);
+  }
+}
+
 async function sendMove(move) {
   if (S.movePending) return;
+  if (!S.game || S.game.status !== 'active') return;
   const from = move.slice(0, 2);
   const to   = move.slice(2, 4);
 
@@ -406,15 +428,19 @@ async function sendMove(move) {
   optimisticMovePiece(from, to);
 
   // Safety: if the server never acks (network drop, etc.), release the lock
-  // after 6s so the player isn't stuck staring at a frozen board.
+  // after 15s (CPU "thinks" up to a couple seconds + network).
   if (S.movePendingTimer) clearTimeout(S.movePendingTimer);
-  S.movePendingTimer = setTimeout(() => {
-    if (S.movePending) {
+  S.movePendingTimer = setTimeout(async () => {
+    if (!S.movePending) return;
+    // Don't just warn — actually try REST so the game can progress.
+    try {
+      await sendMoveViaREST(move);
+    } catch (_e) {
       clearMoveLock();
       if (S.game) renderBoard(S.game.fen);
-      Toast.warn('No response from server — try again.');
+      Toast.warn('Server is slow — please try the move again.');
     }
-  }, 6000);
+  }, 15000);
 
   if (S.ws && S.ws.readyState === WebSocket.OPEN) {
     try {
@@ -422,52 +448,109 @@ async function sendMove(move) {
         type: 'move',
         data: { move, client_timestamp: Date.now() },
       }));
-    } catch (e) {
-      clearMoveLock();
-      Toast.err(`Move error: ${e.message || e}`);
-      if (S.game) renderBoard(S.game.fen);
+      return;
+    } catch (_e) {
+      // WS send failed mid-flight; fall through to REST below.
     }
-    return;
   }
 
-  // REST fallback
-  try {
-    const res = await API.makeMove(S.game.id, move);
-    clearMoveLock();
-    if (res.time_forfeit) {
-      await refreshGame();
-      showResult(res.result, 'time_forfeit');
-      return;
-    }
-    await refreshGame();
-  } catch(e) {
-    clearMoveLock();
-    Toast.err(`Move error: ${e.message}`);
-    if (S.game) renderBoard(S.game.fen);
-  }
+  // WS closed/closing/unavailable — use REST directly.
+  await sendMoveViaREST(move);
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-//  WebSocket
+//  WebSocket  (heartbeat + auto-reconnect)
 // ════════════════════════════════════════════════════════════════════════════
+function stopWSHeartbeat() {
+  if (S.wsPingTimer) { clearInterval(S.wsPingTimer); S.wsPingTimer = null; }
+}
+
+function startWSHeartbeat() {
+  stopWSHeartbeat();
+  S.wsPingTimer = setInterval(() => {
+    if (S.ws && S.ws.readyState === WebSocket.OPEN) {
+      try { S.ws.send(JSON.stringify({ type: 'ping' })); } catch (_e) { /* ignore */ }
+    }
+  }, 25000);
+}
+
+function setConnectionBanner(text, cls) {
+  // Soft, non-blocking indicator inside the turn banner so the user knows
+  // the live channel is reconnecting.
+  const dot  = document.getElementById('turn-dot');
+  const tEl  = document.getElementById('turn-text');
+  if (dot && cls) dot.className = `turn-dot ${cls}`;
+  if (tEl && text) tEl.textContent = text;
+}
+
+function closeWS({ manual = false } = {}) {
+  S.wsClosedManually = manual;
+  stopWSHeartbeat();
+  if (S.wsReconnectTimer) { clearTimeout(S.wsReconnectTimer); S.wsReconnectTimer = null; }
+  if (S.ws) {
+    try { S.ws.close(); } catch (_e) { /* ignore */ }
+    S.ws = null;
+  }
+  S.wsGameId = null;
+}
+
 function connectWS(gameId) {
-  if (S.ws) { S.ws.close(); S.ws = null; }
+  if (S.wsReconnectTimer) { clearTimeout(S.wsReconnectTimer); S.wsReconnectTimer = null; }
+  if (S.ws) { try { S.ws.close(); } catch (_e) {} S.ws = null; }
+  S.wsClosedManually = false;
+  S.wsGameId = gameId;
+
   const url = `${WS_PROTO}://${WS_HOST}/games/ws/${gameId}?token=${S.token}`;
-  S.ws = new WebSocket(url);
+  let ws;
+  try {
+    ws = new WebSocket(url);
+  } catch (e) {
+    console.warn('WS open failed', e);
+    scheduleWSReconnect(gameId);
+    return;
+  }
+  S.ws = ws;
 
-  S.ws.onopen = () => console.log('WS connected');
+  ws.onopen = () => {
+    console.log('WS connected', gameId);
+    startWSHeartbeat();
+    // Re-sync state in case we missed events while disconnected.
+    refreshGame().then(updateTurnBanner).catch(() => {});
+  };
 
-  S.ws.onmessage = async (ev) => {
-    const msg = JSON.parse(ev.data);
+  ws.onmessage = (ev) => {
+    let msg;
+    try { msg = JSON.parse(ev.data); } catch (_e) { return; }
     handleWSMessage(msg);
   };
 
-  S.ws.onerror = (e) => console.warn('WS error', e);
+  ws.onerror = (e) => console.warn('WS error', e);
 
-  S.ws.onclose = (e) => {
-    console.log('WS closed', e.code);
-    if (e.code === 4001) Toast.err('Session kicked: another tab opened!');
+  ws.onclose = (e) => {
+    console.log('WS closed', e.code, e.reason);
+    stopWSHeartbeat();
+    S.ws = null;
+    if (e.code === 4001) {
+      Toast.err('Session kicked: another tab opened!');
+      return;
+    }
+    if (S.wsClosedManually) return;
+    // Auto-reconnect if the game is still active and we still want this one.
+    if (S.game && S.game.id === gameId && S.game.status === 'active') {
+      Toast.warn('Live connection dropped — reconnecting…');
+      scheduleWSReconnect(gameId);
+    }
   };
+}
+
+function scheduleWSReconnect(gameId, delayMs = 1500) {
+  if (S.wsReconnectTimer) clearTimeout(S.wsReconnectTimer);
+  S.wsReconnectTimer = setTimeout(() => {
+    S.wsReconnectTimer = null;
+    if (!S.game || S.game.id !== gameId || S.game.status !== 'active') return;
+    if (S.ws && S.ws.readyState === WebSocket.OPEN) return;
+    connectWS(gameId);
+  }, delayMs);
 }
 
 async function handleWSMessage(msg) {
@@ -528,9 +611,12 @@ async function handleWSMessage(msg) {
 
   if (type === 'error') {
     clearMoveLock();
-    Toast.err(`🚫 ${data.message}`);
+    // If the server rejected our optimistic move, snap the board back to the
+    // authoritative state so the player doesn't see a ghost piece.
     S.selected = null;
-    renderBoard(S.game.fen);
+    S.lastFrom = S.lastTo = null;
+    if (S.game) renderBoard(S.game.fen);
+    Toast.err(`🚫 ${data.message}`);
   }
 
   if (type === 'kicked') {
@@ -1422,7 +1508,7 @@ function afterLogin(token, user) {
 function logout() {
   S.token = S.user = S.game = S.wallet = null;
   stopClockTicker();
-  if (S.ws)    { S.ws.close(); S.ws = null; }
+  closeWS({ manual: true });
   if (S.video) { S.video.stop(); S.video = null; }
   localStorage.removeItem('cw_token');
   document.getElementById('navbar').classList.remove('visible');
@@ -1469,7 +1555,7 @@ const App = {
   goLobby() {
     document.getElementById('result-overlay').classList.remove('open');
     stopClockTicker();
-    if (S.ws) { S.ws.close(); S.ws = null; }
+    closeWS({ manual: true });
     if (S.video) { S.video.stop(); S.video = null; }
     S.game = null;
     showView('lobby');
@@ -1603,6 +1689,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   // ── Resign ──
   document.getElementById('resign-btn').addEventListener('click', async () => {
     if (!S.game || S.game.status !== 'active') return;
+
     const bet = Number(S.game.bet_amount) || 0;
     const feeNote = bet > 0
       ? ` Your locked stake (₹${bet.toFixed(2)}) is treated as forfeited on resignation — you will not get it back, and you may lose eligibility for winnings or participation fees for this table.`
@@ -1612,40 +1699,38 @@ document.addEventListener('DOMContentLoaded', async () => {
       'Yes, I resign', 'Keep playing');
     if (!ok) return;
 
+    // Lock UI and stop accepting moves while we resign.
     clearMoveLock();
+    const btn = document.getElementById('resign-btn');
+    if (btn) { btn.disabled = true; btn.textContent = 'Resigning…'; }
+
+    // The WS will receive the broadcast game_over too, but we don't depend on
+    // it: REST is the authoritative path. Suppress auto-reconnect because the
+    // game is ending.
+    closeWS({ manual: true });
+
+    const winner = S.myColor === 'white' ? 'black' : 'white';
     const finishResignUI = async () => {
       try { await refreshGame(); } catch (_e) { /* ignore */ }
-      const winner = S.myColor === 'white' ? 'black' : 'white';
       showResult(winner, 'resignation');
     };
 
-    // Prefer the open WebSocket — the server will broadcast "game_over"
-    // and our WS handler will call refreshGame + showResult. We ALSO arm a
-    // safety net so the result UI shows even if the WS message is lost.
-    if (S.ws && S.ws.readyState === WebSocket.OPEN) {
-      try {
-        S.ws.send(JSON.stringify({ type: 'resign' }));
-      } catch (_e) { /* fall through to REST */ }
-      setTimeout(() => {
-        if (S.game && S.game.status === 'active') finishResignUI();
-      }, 2000);
-      return;
-    }
-
-    // REST fallback
     try {
       await API.resign(S.game.id);
       await finishResignUI();
     } catch (e) {
       const msg = String(e?.message || '').toLowerCase();
-      // Server says "Game is not active." → it ended on a previous click /
-      // a timeout / opponent already-won race. Treat as success and show
-      // the result overlay so the user is not stuck on a frozen board.
+      // "Game is not active." → already ended somehow (race, opponent flag,
+      // already resigned). Show the result either way so the player isn't
+      // stranded on a frozen board.
       if (msg.includes('not active') || msg.includes('completed') || msg.includes('finished')) {
         await finishResignUI();
-        return;
+      } else {
+        Toast.err(e.message || 'Could not resign — please try again.');
+        if (btn) { btn.disabled = false; btn.textContent = '🏳️ Resign'; }
+        // Try to bring the live channel back if the resign failed.
+        if (S.game && S.game.status === 'active' && S.token) connectWS(S.game.id);
       }
-      Toast.err(e.message || 'Could not resign');
     }
   });
 

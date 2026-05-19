@@ -67,7 +67,10 @@ app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 async def serve_frontend():
     index = STATIC_DIR / "index.html"
     if index.exists():
-        return FileResponse(str(index))
+        return FileResponse(
+            str(index),
+            headers={"Cache-Control": "no-cache, no-store, must-revalidate"},
+        )
     return {"message": "ChessWager API", "docs": "/docs", "status": "ok"}
 
 

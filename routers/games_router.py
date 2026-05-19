@@ -571,18 +571,21 @@ async def create_game(
 async def get_game(game_id: int, db: AsyncSession = Depends(get_db)):
     """Get full game state including move history."""
     game = await _get_game_or_404(game_id, db)
-    # Load moves
+    # Explicitly fetch moves; we MUST NOT let Pydantic touch ``game.moves``
+    # via from_attributes — that triggers an async lazy load during sync
+    # validation and fails with MissingGreenlet on async SQLAlchemy.
     result = await db.execute(
         select(Move).where(Move.game_id == game_id).order_by(Move.move_number)
     )
     moves = result.scalars().all()
-    detail = GameDetail.model_validate(game)
+
+    # Validate the column-only fields off the ORM Game, then merge in the
+    # eagerly-loaded moves and the live clock.
+    base = GameOut.model_validate(game).model_dump()
     b = _board_from_game(game)
-    w_m, b_m = _clock_display_millis(game, b)
-    detail.white_time_ms = w_m
-    detail.black_time_ms = b_m
-    detail.moves = [MoveOut.model_validate(m) for m in moves]
-    return detail
+    base["white_time_ms"], base["black_time_ms"] = _clock_display_millis(game, b)
+    base["moves"] = [MoveOut.model_validate(m).model_dump() for m in moves]
+    return GameDetail.model_validate(base)
 
 
 @router.post("/{game_id}/join", response_model=GameOut)
