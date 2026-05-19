@@ -60,7 +60,8 @@ def _normalize_database_url(raw: str) -> str:
 
 SECRET_KEY: str                = _resolve_secret_key()
 ALGORITHM: str                 = os.getenv("ALGORITHM", "HS256")
-ACCESS_TOKEN_EXPIRE_MINUTES: int = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "60"))
+# Longer default so players paying via UPI (multi-step) do not hit expired JWT mid-flow.
+ACCESS_TOKEN_EXPIRE_MINUTES: int = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "10080"))
 DATABASE_URL: str              = _normalize_database_url(
     os.getenv("DATABASE_URL", "sqlite+aiosqlite:///./chess.db")
 )

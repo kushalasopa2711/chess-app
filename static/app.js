@@ -153,7 +153,7 @@ const API = {
   upiInfo:         (amt)    => API.get(`/deposit/upi-info?amount=${amt}`),
   submitDeposit:   (amt, utr) => {
     const fd = new FormData();
-    fd.append('amount', amt);
+    fd.append('amount', String(amt));
     fd.append('utr_number', utr);
     return API.req('POST', '/deposit/request', fd, true);
   },
@@ -1648,6 +1648,14 @@ async function submitUTR() {
   const utr = document.getElementById('utr-input').value.trim();
   if (!utr || utr.length < 6) { Toast.err('Please enter a valid UTR number (6+ characters)'); return; }
   if (!amt || amt < 10)       { Toast.err('Invalid amount'); return; }
+  if (!S.token) { Toast.err('Please log in first.'); return; }
+
+  try {
+    await API.me();
+  } catch (_e) {
+    Toast.err('Your session is no longer valid. Please log in again, then submit your UTR.');
+    return;
+  }
 
   try {
     const r = await API.submitDeposit(amt, utr);
@@ -1656,8 +1664,13 @@ async function submitUTR() {
     document.getElementById('deposit-amount').value = '';
     document.getElementById('utr-input').value = '';
     loadWallet();
-  } catch(e) {
-    Toast.err(e.message);
+  } catch (e) {
+    const m = String(e?.message || '');
+    if (/validate credentials|session expired|not authenticated|401/i.test(m)) {
+      Toast.err('Session expired. Please log in again and re-submit your UTR.');
+    } else {
+      Toast.err(m || 'Could not submit deposit request');
+    }
   }
 }
 

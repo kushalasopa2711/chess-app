@@ -5,6 +5,7 @@ from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 import bcrypt
 from jose import JWTError, jwt
+from jose.exceptions import ExpiredSignatureError
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -59,6 +60,12 @@ async def get_current_user(
         if user_id_str is None:
             raise credentials_exception
         token_data = TokenData(user_id=int(user_id_str))
+    except ExpiredSignatureError:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Session expired. Please log in again, then submit your UTR or continue playing.",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
     except (JWTError, ValueError):
         raise credentials_exception
 

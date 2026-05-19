@@ -169,13 +169,28 @@
   .users-table tr:hover td.col-actions { background: #252A40; }
 
   @media (max-width: 720px) {
-    .users-table { min-width: 520px; font-size: 13px; }
+    .main { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+    .section { padding: 16px 12px; }
+    .users-table { min-width: 640px; font-size: 13px; width: max-content; }
+    .users-table .col-user {
+      min-width: 110px; max-width: 140px; position: sticky; left: 0; z-index: 1;
+      background: #1E2235; box-shadow: 4px 0 12px rgba(0, 0, 0, 0.25);
+    }
+    .users-table thead .col-user { background: #252A40; z-index: 2; }
     .users-table th.col-mob-hide,
     .users-table td.col-mob-hide { display: none !important; }
+    /* Sticky right actions cover names on phones — use normal flow so horizontal scroll shows ID + name first. */
     .users-table th.col-actions,
-    .users-table td.col-actions { min-width: 150px; box-shadow: -6px 0 12px rgba(0, 0, 0, 0.3); }
-    .user-actions { min-width: 0; justify-content: flex-start; gap: 4px; }
+    .users-table td.col-actions {
+      position: static !important;
+      min-width: 200px !important;
+      box-shadow: none !important;
+      background: #1E2235 !important;
+    }
+    .users-table thead th.col-actions { background: #252A40 !important; }
+    .user-actions { min-width: 0; justify-content: flex-start; gap: 4px; flex-wrap: wrap; }
     .user-actions .act-btn { font-size: 11px; padding: 5px 8px; }
+    .table-wrap { touch-action: pan-x pan-y; overscroll-behavior-x: contain; }
   }
 
   /* ── Badges ── */
@@ -740,8 +755,17 @@ function goto(sec, btn) {
   if (sec === 'penalties') loadPenalties();
 }
 function reload() {
-  const active = document.querySelector('.section.active');
-  if (active) goto(active.id.replace('sec-', ''));
+  const activeNav = document.querySelector('.sb-link[data-sec].active');
+  if (activeNav) {
+    goto(activeNav.getAttribute('data-sec'), activeNav);
+    return;
+  }
+  const secEl = document.querySelector('.section.active');
+  const sid = secEl && secEl.id;
+  const sec = sid && sid.startsWith('sec-') ? sid.slice(4) : 'overview';
+  const btn = document.querySelector(`.sb-link[data-sec="${sec}"]`);
+  if (btn) goto(sec, btn);
+  else loadOverview();
 }
 
 // ── Overview ──────────────────────────────────────────────────────────────

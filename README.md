@@ -57,7 +57,7 @@ Interactive API docs: **http://localhost:8000/docs**
 | `ENV` | `development` | Set to `production` on live servers — enables strict secret validation. |
 | `SECRET_KEY` | random (dev) | JWT signing secret. **Must be ≥ 32 chars in production**, otherwise app refuses to boot. |
 | `ALGORITHM` | `HS256` | JWT algorithm |
-| `ACCESS_TOKEN_EXPIRE_MINUTES` | `60` | Token lifetime |
+| `ACCESS_TOKEN_EXPIRE_MINUTES` | `10080` (~7 days) | JWT lifetime — longer default avoids “session expired” during slow UPI payment + UTR entry on mobile |
 | `DATABASE_URL` | SQLite local | SQLAlchemy async DB URL. Accepts `postgres://`, `postgresql://`, or `postgresql+asyncpg://` — auto-normalised. |
 | `DATABASE_SSL` | unset | Set to `require` to force SSL on managed Postgres providers. |
 | `ALLOWED_ORIGINS` | `*` | Comma-separated CORS allow-list. Set explicitly in production. |
