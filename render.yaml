@@ -4,7 +4,7 @@ services:
     env: python
     plan: starter
     buildCommand: pip install --upgrade pip && pip install -r requirements.txt
-    startCommand: gunicorn -k uvicorn.workers.UvicornWorker main:app --bind 0.0.0.0:$PORT --workers 2 --timeout 60 --graceful-timeout 30 --keep-alive 30
+    startCommand: gunicorn -k uvicorn.workers.UvicornWorker main:app --bind 0.0.0.0:$PORT --workers 1 --timeout 60 --graceful-timeout 30 --keep-alive 30
     healthCheckPath: /health
     autoDeploy: true
     envVars:
@@ -28,8 +28,9 @@ services:
         sync: false
       - key: UPI_NAME
         sync: false
+      # Must stay 1 unless you add Redis (or similar) for WS fan-out across workers.
       - key: WEB_CONCURRENCY
-        value: "2"
+        value: "1"
 
 databases:
   - name: chesswager-db

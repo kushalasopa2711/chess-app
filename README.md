@@ -61,6 +61,7 @@ Interactive API docs: **http://localhost:8000/docs**
 | `DATABASE_URL` | SQLite local | SQLAlchemy async DB URL. Accepts `postgres://`, `postgresql://`, or `postgresql+asyncpg://` — auto-normalised. |
 | `DATABASE_SSL` | unset | Set to `require` to force SSL on managed Postgres providers. |
 | `ALLOWED_ORIGINS` | `*` | Comma-separated CORS allow-list. Set explicitly in production. |
+| `WEB_CONCURRENCY` | `1` | Gunicorn worker count — use **1** so in-memory WebSocket rooms see every player; raise only with shared broadcast (e.g. Redis). |
 | `ADMIN_SECRET` | dev value | Admin dashboard secret. **Must be ≥16 chars and non-default in production**. |
 | `MAX_WALLET_BALANCE` | `100` | Hard cap on wallet balance |
 | `MIN_BET` / `MAX_BET` | `10` / `100` | Stake bounds |
@@ -86,7 +87,7 @@ The repo ships a `Procfile` and `render.yaml` so you can deploy on Render (or an
    - Wires `DATABASE_URL` into the web service automatically.
    - Auto-generates `SECRET_KEY`.
 3. In the dashboard set the *manual* env vars: `ADMIN_SECRET`, `ALLOWED_ORIGINS`, `UPI_ID`, `UPI_NAME`.
-4. First deploy will run `gunicorn -k uvicorn.workers.UvicornWorker main:app` with two workers.
+4. First deploy runs Gunicorn with **one worker** by default. Game WebSockets and in-memory connection tables are **not shared across workers**; if you run `workers > 1` without a cross-worker pub/sub layer (e.g. Redis), opponents will often miss live moves and appear “disconnected” even though HTTP still works. Scale vertical capacity (larger instance) before adding workers unless you implement shared broadcast.
 5. Open `/health` → expect `{"status":"ok","env":"production"}`.
 
 ### Any other host
@@ -96,8 +97,10 @@ Required env vars: `ENV=production`, `SECRET_KEY` (≥32 chars), `ADMIN_SECRET` 
 Start command:
 
 ```bash
-gunicorn -k uvicorn.workers.UvicornWorker main:app --bind 0.0.0.0:$PORT --workers 2 --timeout 60 --keep-alive 30
+gunicorn -k uvicorn.workers.UvicornWorker main:app --bind 0.0.0.0:$PORT --workers 1 --timeout 60 --keep-alive 30
 ```
+
+Use **`--workers 1`** for correct WebSocket live move delivery with the current in-memory `ConnectionManager` (see Render notes above).
 
 ### Database — Postgres
 
@@ -157,6 +160,8 @@ On Render's managed Postgres, set `DATABASE_SSL=require` (the bundled `render.ya
 ---
 
 ## WebSocket Protocol
+
+Live move broadcasts use an **in-process** connection map. Any hosting setup that runs **multiple Gunicorn/Uvicorn worker processes** without a shared message bus will drop events between players. Run **one worker** per instance (as in `Procfile` / `render.yaml`) unless you add Redis pub/sub (or equivalent) and wire broadcasts through it.
 
 Connect to `ws://localhost:8000/games/ws/{game_id}?token=<JWT>`
 

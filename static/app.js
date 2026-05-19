@@ -37,6 +37,8 @@ const S = {
   userWsReconnectTimer: null,
   wsReconnectBurst: 0,   // exponential backoff for game WS reconnect
   wsLastDropToast: 0,     // throttle "connection dropped" toasts
+  pendingMoveUci: null,   // last move we sent over WS while awaiting server ack
+  _moveProbeTimers: null, // timeouts that poll GET /games/:id to recover lost WS acks
 };
 
 let _webcamPromptPromise = null;
@@ -44,6 +46,45 @@ let _webcamPromptPromise = null;
 /** True when MediaRecorder is running for the game currently open in S.game. */
 function isWebcamRecordingCurrentGame() {
   return !!(S.video && S.video.active && S.game && Number(S.video.gameId) === Number(S.game.id));
+}
+
+function clearMoveProbeTimers() {
+  if (S._moveProbeTimers && S._moveProbeTimers.length) {
+    S._moveProbeTimers.forEach((id) => clearTimeout(id));
+  }
+  S._moveProbeTimers = null;
+}
+
+/** If we missed the WS ack, the move list from GET /games/:id still reflects success. */
+function tryClearMoveLockFromLocalState() {
+  if (!S.movePending || !S.pendingMoveUci || !S.game?.moves || !S.user) return;
+  const last = S.game.moves[S.game.moves.length - 1];
+  if (last && last.player_id === S.user.id && last.move_uci === S.pendingMoveUci) {
+    clearMoveLock();
+  }
+}
+
+function scheduleMoveAckProbes(expectedUci) {
+  clearMoveProbeTimers();
+  const fire = () => void probeMoveAckFromServer(expectedUci);
+  S._moveProbeTimers = [
+    setTimeout(fire, 2200),
+    setTimeout(fire, 5200),
+    setTimeout(fire, 9000),
+  ];
+}
+
+async function probeMoveAckFromServer(expectedUci) {
+  if (!S.movePending || S.pendingMoveUci !== expectedUci || !S.game) return;
+  try {
+    await refreshGame();
+    tryClearMoveLockFromLocalState();
+    if (!S.movePending) return;
+    const st = S.ws ? S.ws.readyState : WebSocket.CLOSED;
+    if (st === WebSocket.CLOSED || st === WebSocket.CLOSING) {
+      await sendMoveViaREST(expectedUci);
+    }
+  } catch (_e) { /* ignore */ }
 }
 
 // ── Piece unicode map ────────────────────────────────────────────────────────
@@ -462,6 +503,8 @@ function needsPromotion(from, to, _targetPiece) {
 
 function clearMoveLock() {
   S.movePending = false;
+  S.pendingMoveUci = null;
+  clearMoveProbeTimers();
   if (S.movePendingTimer) {
     clearTimeout(S.movePendingTimer);
     S.movePendingTimer = null;
@@ -490,6 +533,7 @@ async function sendMove(move) {
   if (!S.game || S.game.status !== 'active') return;
 
   S.movePending = true;
+  S.pendingMoveUci = move;
   clearSelection();
   // Don't pre-paint the destination — show a subtle "Sending move…" hint on
   // the turn banner instead. The board re-renders on the authoritative ack.
@@ -510,7 +554,7 @@ async function sendMove(move) {
     }
   } catch (_e) { /* non-critical */ }
 
-  // Safety: if no ack within 12s, re-sync from the server (don't blindly
+  // Safety: if no ack within 9s, re-sync from the server (don't blindly
   // re-send — re-sending caused the spurious "Not your turn" 400s when the
   // first attempt actually got through over WS).
   if (S.movePendingTimer) clearTimeout(S.movePendingTimer);
@@ -519,7 +563,7 @@ async function sendMove(move) {
     clearMoveLock();
     try { await refreshGame(); } catch (_e) { /* ignore */ }
     Toast.warn('Server was slow — board re-synced. Try again if needed.');
-  }, 12000);
+  }, 9000);
 
   if (S.ws && S.ws.readyState === WebSocket.OPEN) {
     try {
@@ -527,6 +571,7 @@ async function sendMove(move) {
         type: 'move',
         data: { move, client_timestamp: Date.now() },
       }));
+      scheduleMoveAckProbes(move);
       return;
     } catch (_e) {
       // WS send failed mid-flight; fall through to REST below.
@@ -550,7 +595,7 @@ function startWSHeartbeat() {
     if (S.ws && S.ws.readyState === WebSocket.OPEN) {
       try { S.ws.send(JSON.stringify({ type: 'ping' })); } catch (_e) { /* ignore */ }
     }
-  }, 25000);
+  }, 15000);
 }
 
 function setConnectionBanner(text, cls) {
@@ -604,7 +649,7 @@ function connectWS(gameId) {
   ws.onmessage = (ev) => {
     let msg;
     try { msg = JSON.parse(ev.data); } catch (_e) { return; }
-    handleWSMessage(msg);
+    void handleWSMessage(msg).catch((e) => console.warn('WS message handler', e));
   };
 
   ws.onerror = (e) => console.warn('WS error', e);
@@ -633,7 +678,7 @@ function connectWS(gameId) {
 function scheduleWSReconnect(gameId) {
   if (S.wsReconnectTimer) clearTimeout(S.wsReconnectTimer);
   S.wsReconnectBurst = (S.wsReconnectBurst || 0) + 1;
-  const delayMs = Math.min(45000, Math.round(2000 * Math.pow(1.65, S.wsReconnectBurst - 1)));
+  const delayMs = Math.min(30000, Math.round(900 * Math.pow(1.55, S.wsReconnectBurst - 1)));
   S.wsReconnectTimer = setTimeout(() => {
     S.wsReconnectTimer = null;
     if (!S.game || S.game.id !== gameId || S.game.status !== 'active') return;
@@ -647,7 +692,6 @@ async function handleWSMessage(msg) {
 
   if (type === 'connected') {
     await refreshGame();
-    updateTurnBanner();
   }
 
   if (type === 'game_started') {
@@ -724,6 +768,7 @@ async function refreshGame() {
   updatePlayerCards();
   renderMoveList();
   updatePrize();
+  tryClearMoveLockFromLocalState();
   updateTurnBanner();
   if (S.game.status === 'active') {
     syncClockFromGame();
@@ -1040,6 +1085,7 @@ document.addEventListener('visibilitychange', () => {
     const ms = Date.now() - S.tabHiddenAt;
     S.tabHiddenAt = null;
     if (S.video && S.video.active) S.video.flushSlice();
+    if (S.movePending && S.pendingMoveUci) void probeMoveAckFromServer(S.pendingMoveUci);
     if (ms > 3000) {
       Toast.warn(`⚠️ You were away for ${Math.round(ms / 1000)}s – this has been noted.`);
       API.reportTabHidden(S.game.id, ms).catch(() => {});
